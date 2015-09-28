@@ -6,6 +6,14 @@ use std::env;
 use std::process::{Command, Stdio};
 
 fn main() {
+    let result = Command::new("autoconf213")
+        .current_dir("mozjs/js/src")
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status()
+        .unwrap();
+    assert!(result.success());
+
     let out_dir = env::var("OUT_DIR").unwrap();
     let result = Command::new("make")
         .args(&["-R", "-f", "makefile.cargo"])
