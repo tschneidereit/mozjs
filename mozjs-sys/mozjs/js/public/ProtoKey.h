@@ -158,7 +158,26 @@
   REAL_IF_INTL(PlainYearMonth, OCLASP(temporal::PlainYearMonth))             \
   REAL_IF_INTL(PlainTime, OCLASP(temporal::PlainTime))                       \
   REAL_IF_INTL(TemporalNow, OCLASP(temporal::TemporalNow))                   \
-  REAL_IF_INTL(ZonedDateTime, OCLASP(temporal::ZonedDateTime))
+  REAL_IF_INTL(ZonedDateTime, OCLASP(temporal::ZonedDateTime))               \
+  IF_JS_STREAMS(REAL(ReadableStream, &js::ReadableStream::class_))             \
+  IF_JS_STREAMS(REAL(ReadableStreamBYOBReader,                                 \
+                    &js::ReadableStreamBYOBReader::class_))                    \
+  IF_JS_STREAMS(REAL(ReadableStreamBYOBRequest,                                \
+                    &js::ReadableStreamBYOBRequest::class_))                   \
+  IF_JS_STREAMS(REAL(ReadableStreamDefaultReader,                              \
+                     &js::ReadableStreamDefaultReader::class_))                \
+  IF_JS_STREAMS(REAL(ReadableStreamDefaultController,                          \
+                     &js::ReadableStreamDefaultController::class_))            \
+  IF_JS_STREAMS(REAL(ReadableByteStreamController,                             \
+                     &js::ReadableByteStreamController::class_))               \
+  IF_JS_STREAMS(REAL(WritableStream, &js::WritableStream::class_))             \
+  IF_JS_STREAMS(REAL(WritableStreamDefaultController,                          \
+                     &js::WritableStreamDefaultController::class_))            \
+  IF_JS_STREAMS(REAL(WritableStreamDefaultWriter,                              \
+                     &js::WritableStreamDefaultWriter::class_))                \
+  IF_JS_STREAMS(                                                               \
+      REAL(ByteLengthQueuingStrategy, &js::ByteLengthQueuingStrategy::class_)) \
+  IF_JS_STREAMS(REAL(CountQueuingStrategy, &js::CountQueuingStrategy::class_))
 
 #define JS_FOR_PROTOTYPES(REAL, IMAGINARY)                      \
   JS_FOR_PROTOTYPES_(REAL, IMAGINARY, IF_INTL(REAL, IMAGINARY), \
