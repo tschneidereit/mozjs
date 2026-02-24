@@ -1,0 +1,82 @@
+From 4f331280f65fdddd8095b4b1d98dceb6f9add009 Mon Sep 17 00:00:00 2001
+From: Till Schneidereit <till@tillschneidereit.net>
+Date: Mon, 26 Jul 2021 11:28:40 +0200
+Subject: [PATCH] JSAPI support for resetting the seed for Math.random()
+
+In long-running environments, it's desirable for the embedding to reset the random seed at controlled points in time.
+
+In particular, when running in WASI, a situation can occur where a VM snapshot is taken at build time using [Wizer](https://github.com/bytecodealliance/wizer), which is then loaded and used as the basis for running separate workloads many times over. If `Math.random()` was called during the initialization phase, this would cause all workloads to get the same results for all consecutive calls to `Math.random()`.
+---
+ js/src/jsfriendapi.h    | 10 ++++++++++
+ js/src/jsmath.cpp       |  6 ++++++
+ js/src/vm/JSContext.cpp |  5 +++++
+ js/src/vm/Realm.h       |  4 ++++
+ 4 files changed, 25 insertions(+)
+
+diff --git a/js/src/jsfriendapi.h b/js/src/jsfriendapi.h
+index 979969e2ef5e3..1399308367951 100644
+--- a/js/src/jsfriendapi.h
++++ b/js/src/jsfriendapi.h
+@@ -251,6 +251,14 @@ extern JS_PUBLIC_API void RestartDrainingJobQueue(JSContext* cx);
+
+ extern JS_PUBLIC_API void RunJobs(JSContext* cx);
+
++/**
++ * Reset the seed for Math.random().
++ *
++ * Enables embedders to reset the seed at controlled points, e.g. after
++ * resuming execution from an instance snapshot of SpiderMonkey's VM.
++ */
++extern JS_PUBLIC_API void ResetMathRandomSeed(JSContext* cx);
++
+ extern JS_PUBLIC_API JS::Zone* GetRealmZone(JS::Realm* realm);
+
+ using PreserveWrapperCallback = bool (*)(JSContext*, JS::HandleObject);
+diff --git a/js/src/jsmath.cpp b/js/src/jsmath.cpp
+index 7fe5f3a8ccc6a..95f59eb68f131 100644
+--- a/js/src/jsmath.cpp
++++ b/js/src/jsmath.cpp
+@@ -553,6 +553,12 @@ Realm::getOrCreateRandomNumberGenerator() {
+   return randomNumberGenerator_.ref();
+ }
+
++void Realm::resetRandomNumberGenerator() {
++  if (randomNumberGenerator_.isSome()) {
++    randomNumberGenerator_.reset();
++  }
++}
++
+ double js::math_random_impl(JSContext* cx) {
+   return cx->realm()->getOrCreateRandomNumberGenerator().nextDouble();
+ }
+diff --git a/js/src/vm/JSContext.cpp b/js/src/vm/JSContext.cpp
+index fa8d27adf9575..c233e59827291 100644
+--- a/js/src/vm/JSContext.cpp
++++ b/js/src/vm/JSContext.cpp
+@@ -820,6 +820,11 @@ bool InternalJobQueue::getHostDefinedData(
+   return true;
+ }
+
++JS_PUBLIC_API void js::ResetMathRandomSeed(JSContext* cx) {
++  MOZ_ASSERT(cx->realm());
++  cx->realm()->resetRandomNumberGenerator();
++}
++
+ bool InternalJobQueue::enqueuePromiseJob(JSContext* cx,
+                                          JS::HandleObject promise,
+                                          JS::HandleObject job,
+diff --git a/js/src/vm/Realm.h b/js/src/vm/Realm.h
+index f6d4a6e2570b7..2df03c5285776 100644
+--- a/js/src/vm/Realm.h
++++ b/js/src/vm/Realm.h
+@@ -802,6 +802,10 @@ class JS::Realm : public JS::shadow::Realm {
+   // Initializes randomNumberGenerator if needed.
+   mozilla::non_crypto::XorShift128PlusRNG& getOrCreateRandomNumberGenerator();
+
++  // Resets randomNumberGenerator to null, so it'll be reinitialized on next
++  // use.
++  void resetRandomNumberGenerator();
++
+   const mozilla::non_crypto::XorShift128PlusRNG*
+   addressOfRandomNumberGenerator() const {
+     return randomNumberGenerator_.ptr();

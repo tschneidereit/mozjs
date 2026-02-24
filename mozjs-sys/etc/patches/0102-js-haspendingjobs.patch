@@ -1,0 +1,39 @@
+From 9e123f9d3e474866e12eeaabbb9bc14f41526d11 Mon Sep 17 00:00:00 2001
+From: Till Schneidereit <till@tillschneidereit.net>
+Date: Sun, 21 Feb 2021 12:08:19 +0100
+Subject: [PATCH] Add JS::HasJobsPending as a way to query the status of the
+ internal Jobs queue
+
+---
+ js/src/jsfriendapi.h | 2 ++
+ js/src/vm/JSContext.cpp | 5 +++++
+ 2 file changed, 7 insertions(+)
+diff --git a/js/src/jsfriendapi.h b/js/src/jsfriendapi.h
+index 979969e2ef..a041426635 100644
+--- a/js/src/jsfriendapi.h
++++ b/js/src/jsfriendapi.h
+@@ -249,6 +249,8 @@ extern JS_PUBLIC_API void StopDrainingJobQueue(JSContext* cx);
+  */
+ extern JS_PUBLIC_API void RestartDrainingJobQueue(JSContext* cx);
+
++extern JS_PUBLIC_API bool HasJobsPending(JSContext* cx);
++
+ extern JS_PUBLIC_API void RunJobs(JSContext* cx);
+
+ /**
+diff --git a/js/src/vm/JSContext.cpp b/js/src/vm/JSContext.cpp
+index fa8d27adf9..e5068571d7 100644
+--- a/js/src/vm/JSContext.cpp
++++ b/js/src/vm/JSContext.cpp
+@@ -807,6 +807,11 @@ JS_PUBLIC_API void js::RestartDrainingJobQueue(JSContext* cx) {
+   cx->internalJobQueue->uninterrupt();
+ }
+
++JS_PUBLIC_API bool js::HasJobsPending(JSContext* cx) {
++  MOZ_ASSERT(cx->jobQueue);
++  return !cx->jobQueue->empty();
++}
++
+ JS_PUBLIC_API void js::RunJobs(JSContext* cx) {
+   MOZ_ASSERT(cx->jobQueue);
+   MOZ_ASSERT(cx->isEvaluatingModule == 0);

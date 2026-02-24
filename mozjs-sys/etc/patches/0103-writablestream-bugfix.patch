@@ -1,0 +1,32 @@
+From 1836195a083cd3bbc24a443b52bb629a0cf42e5f Mon Sep 17 00:00:00 2001
+From: Till Schneidereit <till@tillschneidereit.net>
+Date: Wed, 30 Jul 2025 13:37:00 +0200
+Subject: [PATCH] Bugfix in handling abort requests in WritableStream
+
+Not sure why this didn't bite us before, but it does now.
+---
+ js/src/builtin/streams/WritableStreamOperations.cpp | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/js/src/builtin/streams/WritableStreamOperations.cpp b/js/src/builtin/streams/WritableStreamOperations.cpp
+index fce029fde49fd..6789cbbc71df7 100644
+--- a/js/src/builtin/streams/WritableStreamOperations.cpp
++++ b/js/src/builtin/streams/WritableStreamOperations.cpp
+@@ -420,7 +420,7 @@ static bool AbortRequestPromiseFulfilledHandler(JSContext* cx, unsigned argc,
+   }
+ 
+   args.rval().setUndefined();
+-  return false;
++  return true;
+ }
+ 
+ /**
+@@ -451,7 +451,7 @@ static bool AbortRequestPromiseRejectedHandler(JSContext* cx, unsigned argc,
+   }
+ 
+   args.rval().setUndefined();
+-  return false;
++  return true;
+ }
+ 
+ /**
