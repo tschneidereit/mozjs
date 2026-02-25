@@ -117,6 +117,9 @@ fn main() {
         }
     }
 
+    // Expose the SpiderMonkey headers to downstream crates.
+    println!("cargo:include={}", build_dir.join("dist").join("include").display());
+
     if env::var_os("MOZJS_FORCE_RERUN").is_none() {
         for var in ENV_VARS {
             println!("cargo:rerun-if-env-changed={}", var);
