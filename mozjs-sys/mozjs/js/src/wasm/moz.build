@@ -15,9 +15,6 @@ include("../js-cxxflags.mozbuild")
 UNIFIED_SOURCES += [
     "AsmJS.cpp",
     "WasmAnyRef.cpp",
-    "WasmBaselineCompile.cpp",
-    "WasmBCFrame.cpp",
-    "WasmBCMemory.cpp",
     "WasmBinary.cpp",
     "WasmBuiltinModule.cpp",
     "WasmBuiltins.cpp",
@@ -34,7 +31,6 @@ UNIFIED_SOURCES += [
     "WasmGenerator.cpp",
     "WasmInitExpr.cpp",
     "WasmInstance.cpp",
-    "WasmIonCompile.cpp",
     "WasmJS.cpp",
     "WasmLog.cpp",
     "WasmMemory.cpp",
@@ -56,6 +52,21 @@ UNIFIED_SOURCES += [
     "WasmValType.cpp",
     "WasmValue.cpp",
 ]
+
+# On WASI, the JIT-based wasm compilers are not usable (JS_CODEGEN_NONE).
+# Exclude them to reduce binary size.
+if not CONFIG["JS_WITHOUT_WASM"]:
+    UNIFIED_SOURCES += [
+        "WasmBaselineCompile.cpp",
+        "WasmBCFrame.cpp",
+        "WasmBCMemory.cpp",
+        "WasmIonCompile.cpp",
+    ]
+else:
+    # Provide stubs for the excluded compiler APIs.
+    UNIFIED_SOURCES += [
+        "WasmCompilerStubs.cpp",
+    ]
 
 # Generate wasm/WasmBuiltinModuleGenerated.h from wasm/WasmBuiltinModule.yaml
 GeneratedFile(

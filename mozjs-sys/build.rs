@@ -523,8 +523,10 @@ fn cc_flags(bindgen: bool) -> Vec<&'static str> {
         if target.contains("wasi") {
             // Unconditionally target p1 for now. Even if the application
             // targets p2, an adapter will take care of it.
-            flags.push("--target=wasm32-wasip1");
+            // flags.push("--target=wasm32-wasip1");
+
             flags.push("-fvisibility=default");
+            flags.push("-D_WASI_EMULATED_GETPID");
         }
     }
 
@@ -539,6 +541,8 @@ fn cc_flags(bindgen: bool) -> Vec<&'static str> {
                 flags.extend(&["-g", "-O0"]);
             }
         }
+    } else if target.contains("wasi") {
+        flags.push("-flto=thin");
     }
 
     let is_apple = target.contains("apple");
@@ -547,10 +551,6 @@ fn cc_flags(bindgen: bool) -> Vec<&'static str> {
 
     if is_apple || is_freebsd || is_ohos {
         flags.push("-stdlib=libc++");
-    }
-
-    if target.contains("wasi") {
-        flags.push("-D_WASI_EMULATED_GETPID");
     }
 
     flags

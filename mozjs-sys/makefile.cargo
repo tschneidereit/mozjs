@@ -102,6 +102,13 @@ ifneq ($(HOST),$(TARGET))
             --disable-clang-plugin \
             --disable-jit \
             --disable-shared-memory \
+            --disable-wasm-memory64 \
+            --disable-wasm-multi-memory \
+            --disable-wasm-js-string-builtins \
+            --disable-wasm-moz-intgemm \
+            --disable-wasm-branch-hinting \
+            --disable-wasm-memory-control \
+            --wasm-no-experimental \
             --with-sysroot=$(WASI_SDK_PATH)/share/wasi-sysroot \
             $(NULL)
         # LTO makes `cargo test --wasm32-wasi` take a very very long time. Since build scripts

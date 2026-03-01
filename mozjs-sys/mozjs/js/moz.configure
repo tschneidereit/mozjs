@@ -1338,6 +1338,8 @@ def is_wasi_target(os):
 
 set_define("_WASI_EMULATED_PROCESS_CLOCKS", True, when=is_wasi_target)
 set_define("_WASI_EMULATED_GETPID", True, when=is_wasi_target)
+set_define("JS_WITHOUT_WASM", True, when=is_wasi_target)
+set_config("JS_WITHOUT_WASM", True, when=is_wasi_target)
 
 
 @depends(milestone.version)
