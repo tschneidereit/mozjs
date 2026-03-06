@@ -214,6 +214,15 @@ impl<T> Clone for Handle<'_, T> {
 
 impl<T> Copy for Handle<'_, T> {}
 
+impl<T: std::fmt::Debug> std::fmt::Debug for Handle<'_, T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // SAFETY: ptr is always valid for the lifetime 'a.
+        f.debug_tuple("Handle")
+            .field(unsafe { self.ptr.as_ref() })
+            .finish()
+    }
+}
+
 #[cfg_attr(
     feature = "crown",
     crown::unrooted_must_root_lint::allow_unrooted_interior

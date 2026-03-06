@@ -1025,6 +1025,32 @@ void CallValueRootTracer(JSTracer* trc, JS::Value* valp, const char* name) {
   JS::TraceRoot(trc, valp, name);
 }
 
+void CallStringRootTracer(JSTracer* trc, JSString** strp, const char* name) {
+  JS::TraceRoot(trc, strp, name);
+}
+
+void CallScriptRootTracer(JSTracer* trc, JSScript** scriptp,
+                           const char* name) {
+  JS::TraceRoot(trc, scriptp, name);
+}
+
+void CallIdRootTracer(JSTracer* trc, jsid* idp, const char* name) {
+  JS::TraceRoot(trc, idp, name);
+}
+
+void CallSymbolRootTracer(JSTracer* trc, JS::Symbol** symp, const char* name) {
+  JS::TraceRoot(trc, symp, name);
+}
+
+void CallFunctionRootTracer(JSTracer* trc, JSFunction** funp,
+                             const char* name) {
+  JS::TraceRoot(trc, funp, name);
+}
+
+void CallBigIntRootTracer(JSTracer* trc, JS::BigInt** bip, const char* name) {
+  JS::TraceRoot(trc, bip, name);
+}
+
 void CallPropertyDescriptorTracer(JSTracer* trc, JS::PropertyDescriptor* desc) {
   desc->trace(trc);
 }
