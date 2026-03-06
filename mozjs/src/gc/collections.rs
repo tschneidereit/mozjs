@@ -104,6 +104,7 @@ impl<'a, T: Traceable> DerefMut for RootedVec<'a, T> {
 ///
 /// If you have GC things like *mut JSObject or JSVal, use rooted!.
 /// If you know what you're doing, use this.
+#[cfg_attr(crown, crown::unrooted_must_root_lint::allow_unrooted_interior)]
 pub struct RootedTraceableBox<T: Traceable + 'static> {
     ptr: *mut T,
 }
