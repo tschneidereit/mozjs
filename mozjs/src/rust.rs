@@ -319,8 +319,8 @@ impl Runtime {
     }
 
     /// Creates a new `JSContext`.
-    pub fn new(engine: JSEngineHandle) -> Runtime {
-        unsafe { Self::create(engine, None) }
+    pub fn new(engine: JSEngineHandle, use_internal_job_queues: bool) -> Runtime {
+        unsafe { Self::create(engine, None, use_internal_job_queues) }
     }
 
     /// Signal that a new child runtime will be created in the future, and ensure
@@ -343,11 +343,18 @@ impl Runtime {
     /// If panicking does not abort the program, any threads with child runtimes will
     /// continue executing after the thread with the parent runtime panics, but they
     /// will be in an invalid and undefined state.
-    pub unsafe fn create_with_parent(parent: ParentRuntime) -> Runtime {
-        Self::create(parent.engine.clone(), Some(parent))
+    pub unsafe fn create_with_parent(
+        parent: ParentRuntime,
+        use_internal_job_queues: bool,
+    ) -> Runtime {
+        Self::create(parent.engine.clone(), Some(parent), use_internal_job_queues)
     }
 
-    unsafe fn create(engine: JSEngineHandle, parent: Option<ParentRuntime>) -> Runtime {
+    unsafe fn create(
+        engine: JSEngineHandle,
+        parent: Option<ParentRuntime>,
+        use_internal_job_queues: bool,
+    ) -> Runtime {
         let parent_runtime = parent.as_ref().map_or(ptr::null_mut(), |r| r.parent);
         let js_context = NonNull::new(JS_NewContext(
             default_heapsize + (ChunkSize as u32),
@@ -380,6 +387,15 @@ impl Runtime {
         let cache = crate::jsapi::__BindgenOpaqueArray::<u64, 2>::default();
         #[cfg(target_pointer_width = "32")]
         let cache = crate::jsapi::__BindgenOpaqueArray::<u32, 2>::default();
+
+        // Enable internal job queue before self-hosting init, as required
+        // by SpiderMonkey. This allows RunJobs() to drain microtasks.
+        if use_internal_job_queues {
+            assert!(
+                js::UseInternalJobQueues(js_context.as_ptr()),
+                "UseInternalJobQueues failed"
+            );
+        }
 
         InitSelfHostedCode(js_context.as_ptr(), cache, None);
 
