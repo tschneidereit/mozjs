@@ -119,10 +119,14 @@ fn main() {
     }
 
     // Expose the SpiderMonkey headers to downstream crates.
-    println!(
-        "cargo:include={}",
-        build_dir.join("dist").join("include").display()
-    );
+    // Source builds produce headers at `dist/include/`; archives unpack them
+    // to `include/`. Use whichever path exists.
+    let include_dir = if lib_dir.join("include").exists() {
+        lib_dir.join("include")
+    } else {
+        lib_dir.join("dist").join("include")
+    };
+    println!("cargo:include={}", include_dir.display());
 
     if env::var_os("MOZJS_FORCE_RERUN").is_none() {
         for var in ENV_VARS {
@@ -970,6 +974,14 @@ mod archive {
         let tar_gz = File::create(format!("{}/{}", target_dir, archive()))?;
         let enc = GzEncoder::new(tar_gz, Compression::default());
         let mut tar = tar::Builder::new(enc);
+
+        // Copy js-confdefs.h into dist/include so C++ consumers get it.
+        let confdefs_src = join_path(build_dir, "js/src/js-confdefs.h");
+        let confdefs_dst = join_path(build_dir, "dist/include/js-confdefs.h");
+        fs::copy(&confdefs_src, &confdefs_dst)?;
+
+        // Bundle the dist/include directory for C++ consumers.
+        tar.append_dir_all("include", join_path(build_dir, "dist/include"))?;
 
         if target.contains("windows") {
             // This is the static library of spidermonkey.
