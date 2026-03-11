@@ -105,6 +105,20 @@ fn main() {
         if !build_from_source {
             link_static_lib_binaries(&lib_dir);
             link_bindgen_static_lib_binaries(&lib_dir);
+
+            // The Rust source files use `include!(concat!(env!("OUT_DIR"), "/build/..."))`,
+            // so the generated binding files must be present at `$OUT_DIR/build/`
+            // even when the archive was extracted to a stable cache directory.
+            fs::create_dir_all(&build_dir).expect("could not create build dir");
+            for binding in ["jsapi.rs", "gluebindings.rs"] {
+                let src = lib_dir.join(binding);
+                let dst = build_dir.join(binding);
+                if src.exists() && src != dst {
+                    fs::copy(&src, &dst).unwrap_or_else(|e| {
+                        panic!("Failed to copy {}: {e}", src.display());
+                    });
+                }
+            }
         }
     }
 
