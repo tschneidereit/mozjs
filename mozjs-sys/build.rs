@@ -119,7 +119,10 @@ fn main() {
     }
 
     // Expose the SpiderMonkey headers to downstream crates.
-    println!("cargo:include={}", build_dir.join("dist").join("include").display());
+    println!(
+        "cargo:include={}",
+        build_dir.join("dist").join("include").display()
+    );
 
     if env::var_os("MOZJS_FORCE_RERUN").is_none() {
         for var in ENV_VARS {
@@ -1148,8 +1151,7 @@ mod archive {
             if let Some(path) = url.strip_prefix("https://github.com/") {
                 let path = path.trim_end_matches('/');
                 // Validate it looks like "owner/repo" (exactly one slash).
-                if path.contains('/') && path.matches('/').count() == 1 && !path.starts_with('/')
-                {
+                if path.contains('/') && path.matches('/').count() == 1 && !path.starts_with('/') {
                     return path.to_string();
                 }
             }

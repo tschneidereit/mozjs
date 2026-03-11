@@ -1029,8 +1029,7 @@ void CallStringRootTracer(JSTracer* trc, JSString** strp, const char* name) {
   JS::TraceRoot(trc, strp, name);
 }
 
-void CallScriptRootTracer(JSTracer* trc, JSScript** scriptp,
-                           const char* name) {
+void CallScriptRootTracer(JSTracer* trc, JSScript** scriptp, const char* name) {
   JS::TraceRoot(trc, scriptp, name);
 }
 
@@ -1043,7 +1042,7 @@ void CallSymbolRootTracer(JSTracer* trc, JS::Symbol** symp, const char* name) {
 }
 
 void CallFunctionRootTracer(JSTracer* trc, JSFunction** funp,
-                             const char* name) {
+                            const char* name) {
   JS::TraceRoot(trc, funp, name);
 }
 

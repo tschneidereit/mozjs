@@ -319,8 +319,8 @@ impl Runtime {
     }
 
     /// Creates a new `JSContext`.
-    pub fn new(engine: JSEngineHandle, use_internal_job_queues: bool) -> Runtime {
-        unsafe { Self::create(engine, None, use_internal_job_queues) }
+    pub fn new(engine: JSEngineHandle) -> Runtime {
+        unsafe { Self::create(engine, None, false) }
     }
 
     /// Signal that a new child runtime will be created in the future, and ensure
@@ -336,6 +336,13 @@ impl Runtime {
         }
     }
 
+    pub unsafe fn create_with_internal_job_queues(
+        engine: JSEngineHandle,
+        parent: Option<ParentRuntime>,
+    ) -> Runtime {
+        Self::create(engine, parent, true)
+    }
+
     /// Creates a new `JSContext` with a parent runtime. If the parent does not outlive
     /// the new runtime, its destructor will assert.
     ///
@@ -343,11 +350,8 @@ impl Runtime {
     /// If panicking does not abort the program, any threads with child runtimes will
     /// continue executing after the thread with the parent runtime panics, but they
     /// will be in an invalid and undefined state.
-    pub unsafe fn create_with_parent(
-        parent: ParentRuntime,
-        use_internal_job_queues: bool,
-    ) -> Runtime {
-        Self::create(parent.engine.clone(), Some(parent), use_internal_job_queues)
+    pub unsafe fn create_with_parent(parent: ParentRuntime) -> Runtime {
+        Self::create(parent.engine.clone(), Some(parent), false)
     }
 
     unsafe fn create(
