@@ -79,25 +79,32 @@ fn main() {
 
     // Check if we can link with pre-built archive, and decide if it needs to build from source.
     let mut build_from_source = should_build_from_source();
+    // When using a pre-built archive, this is set to the stable cache directory
+    // where the archive was extracted, so that link/include directives point
+    // there directly without any copying.
+    let mut lib_dir = build_dir.clone();
     if !build_from_source {
         if let Ok(archive) = env::var("MOZJS_ARCHIVE") {
             // If the archive variable is present, assume it's a URL base to download from.
             let archive =
                 archive::download_archive(Some(&archive)).unwrap_or(PathBuf::from(archive));
             // Panic directly since the archive is specified manually.
-            archive::decompress_static_lib(&archive, &build_dir).unwrap();
+            lib_dir = archive::decompress_static_lib(&archive).unwrap();
         } else {
             let result = archive::download_archive(None)
-                .and_then(|archive| archive::decompress_static_lib(&archive, &build_dir));
-            if let Err(e) = result {
-                println!("cargo:warning=Failed to link pre-built archive by {e}. Building from source instead.");
-                build_from_source = true;
+                .and_then(|archive| archive::decompress_static_lib(&archive));
+            match result {
+                Ok(dir) => lib_dir = dir,
+                Err(e) => {
+                    println!("cargo:warning=Failed to link pre-built archive by {e}. Building from source instead.");
+                    build_from_source = true;
+                }
             }
         }
 
         if !build_from_source {
-            link_static_lib_binaries(&build_dir);
-            link_bindgen_static_lib_binaries(&build_dir);
+            link_static_lib_binaries(&lib_dir);
+            link_bindgen_static_lib_binaries(&lib_dir);
         }
     }
 
@@ -967,6 +974,57 @@ mod archive {
         Some(current)
     }
 
+    /// Returns a stable cache directory for downloaded and extracted archives.
+    ///
+    /// Uses `$CARGO_HOME/mozjs/v{version}/` so that each mozjs-sys version
+    /// gets its own cache subdirectory, and version bumps naturally invalidate
+    /// stale caches.
+    fn cache_dir() -> PathBuf {
+        let cargo_home = env::var_os("CARGO_HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                let home = env::var_os("HOME")
+                    .or_else(|| env::var_os("USERPROFILE"))
+                    .expect("Neither CARGO_HOME, HOME, nor USERPROFILE is set");
+                PathBuf::from(home).join(".cargo")
+            });
+        let version = env::var("CARGO_PKG_VERSION").unwrap();
+        cargo_home.join("mozjs").join(format!("v{version}"))
+    }
+
+    /// Decompress the archive into a stable cache directory and return its path.
+    ///
+    /// Extracts to `$CARGO_HOME/mozjs/v{version}/{archive_stem}/` so that
+    /// repeated builds with different `OUT_DIR` hashes reuse the same
+    /// extraction. The caller can point link/include directives at the
+    /// returned path directly.
+    pub(crate) fn decompress_static_lib(archive_path: &Path) -> Result<PathBuf, std::io::Error> {
+        // Determine the extraction cache path based on the archive filename.
+        let archive_name = archive_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown");
+        let extract_name = archive_name.strip_suffix(".tar.gz").unwrap_or(archive_name);
+        let extract_cache = cache_dir().join(extract_name);
+        let marker = extract_cache.join(".complete");
+
+        if !marker.exists() {
+            // Clean up any partial extraction from a previous interrupted build.
+            let _ = fs::remove_dir_all(&extract_cache);
+            fs::create_dir_all(&extract_cache)?;
+
+            let tar_gz = File::open(archive_path)?;
+            let tar = GzDecoder::new(tar_gz);
+            let mut archive = Archive::new(tar);
+            archive.unpack(&extract_cache)?;
+
+            // Mark extraction complete so we skip it on subsequent builds.
+            File::create(&marker)?;
+        }
+
+        Ok(extract_cache)
+    }
+
     /// Compress spidermonkey build into a tarball with necessary static binaries and bindgen wrappers.
     pub(crate) fn compress_static_lib(build_dir: &Path) -> Result<(), std::io::Error> {
         let target = env::var("TARGET").unwrap();
@@ -1060,24 +1118,6 @@ mod archive {
             ""
         };
         format!("libmozjs-{target}{features}.tar.gz")
-    }
-
-    /// Decompress the archive of spidermonkey build to build directory.
-    pub(crate) fn decompress_static_lib(
-        archive: &Path,
-        build_dir: &Path,
-    ) -> Result<(), std::io::Error> {
-        // Try to open the archive from provided path. If it doesn't exist, try to open it as relative
-        // path from workspace.
-        let tar_gz = File::open(archive).unwrap_or({
-            let mut workspace_dir = get_cargo_target_dir(build_dir).unwrap().to_path_buf();
-            workspace_dir.pop();
-            File::open(workspace_dir.join(archive))?
-        });
-        let tar = GzDecoder::new(tar_gz);
-        let mut archive = Archive::new(tar);
-        archive.unpack(build_dir)?;
-        Ok(())
     }
 
     static ATTESTATION_AVAILABLE: LazyLock<bool> = LazyLock::new(|| {
@@ -1215,11 +1255,17 @@ mod archive {
     /// Download the SpiderMonkey archive with cURL using the provided base URL. If it's None,
     /// it will use the release page of the repository specified by `MOZJS_REPO` (defaulting
     /// to `servo/mozjs`).
+    ///
+    /// The archive is downloaded to a stable cache directory under `$CARGO_HOME/mozjs/`
+    /// so that rebuilds with a different `OUT_DIR` hash don't re-download.
     pub(crate) fn download_archive(base: Option<&str>) -> Result<PathBuf, std::io::Error> {
         let default_base = format!("https://github.com/{}/releases", repo_slug());
         let base = base.unwrap_or(&default_base);
         let version = env::var("CARGO_PKG_VERSION").unwrap();
-        let archive_path = PathBuf::from(env::var_os("OUT_DIR").unwrap()).join(&archive());
+
+        let cache = cache_dir();
+        fs::create_dir_all(&cache)?;
+        let archive_path = cache.join(&archive());
 
         if !archive_path.exists() {
             eprintln!("Trying to download prebuilt mozjs static library from Github Releases");
@@ -1237,6 +1283,8 @@ mod archive {
                 .status()?
                 .success()
             {
+                // Clean up partial download.
+                let _ = fs::remove_file(&archive_path);
                 return Err(std::io::Error::from(std::io::ErrorKind::NotFound));
             }
             eprintln!(
