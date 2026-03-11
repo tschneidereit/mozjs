@@ -17,7 +17,9 @@ your own archive and link to it. `mozjs` currently offers two environment variab
 this feature:
 
 - `MOZJS_CREATE_ARCHIVE=1` will create a SpiderMonkey binary archive for release usage. It will
-   be created in the `target` directory.
+   be created in the `target` directory. When combined with the `debugmozjs` feature, the archive
+   is compiled with `-O3` and debug symbols are stripped, since prebuilt debug archives are intended
+   for consumers who need debug assertions but not the ability to debug SpiderMonkey internals.
 - `MOZJS_ARCHIVE` can be used to build against a pre-built archive. Using this flag, compiling
    SpiderMonkey and the bindgen wrappers is unnecessary. There are two ways to use it:
    - `MOZJS_ARCHIVE=path/to/libmozjs.tar.gz`: This option will look for the archive at the local
@@ -27,8 +29,13 @@ this feature:
       archive. The base URL should  be similar to `https://github.com/servo/mozjs/releases`.
       The build script will append the version and target accordingly. See the files at the example
       URL for more details.
+- `MOZJS_REPO` overrides the GitHub repository slug (e.g. `myfork/mozjs`) used for downloading
+  prebuilt archives and verifying attestations. By default, the slug is derived automatically from
+  the `repository` field in `Cargo.toml` (which is baked into the crate at publish time for crates.io,
+  and comes from the fork's `Cargo.toml` for git dependencies). Falls back to `servo/mozjs` if
+  neither `MOZJS_REPO` nor a valid `repository` URL is available.
 - `MOZJS_ATTESTATION` allows uses [Github Attestations] to verify the integrity of the prebuilt archive
-  and that the archive was built by in CI, for a valid commit on the main branch of the servo/mozjs repo.
+  and that the archive was built in CI, for a valid commit on the main branch of the source repository.
   Attestation verification requires having a recent version of the github cli tool [gh] installed.
   If artifact verification is enabled and reports an error, the prebuilt archive will be discarded and 
   mozjs will be built from source instead.

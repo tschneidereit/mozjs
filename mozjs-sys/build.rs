@@ -27,6 +27,7 @@ const ENV_VARS: &'static [&'static str] = &[
     "MOZJS_CREATE_ARCHIVE",
     "MOZJS_FORCE_RERUN",
     "MOZJS_FROM_SOURCE",
+    "MOZJS_REPO",
     "PYTHON",
     "STLPORT_LIBS",
 ];
@@ -535,7 +536,15 @@ fn cc_flags(bindgen: bool) -> Vec<&'static str> {
         flags.extend(&["-DJS_GC_ZEAL", "-DDEBUG", "-DJS_DEBUG"]);
 
         if !bindgen {
-            if target.contains("windows") {
+            let creating_archive = env::var_os("MOZJS_CREATE_ARCHIVE").is_some();
+            if creating_archive {
+                // When creating prebuilt archives, compile with -O3 for performance.
+                // Consumers of debug archives only need the debug assertions, not
+                // the ability to debug SpiderMonkey internals.
+                if !target.contains("windows") {
+                    flags.push("-O3");
+                }
+            } else if target.contains("windows") {
                 flags.push("-Od");
             } else {
                 flags.extend(&["-g", "-O0"]);
@@ -989,20 +998,18 @@ mod archive {
                 &mut File::open(join_path(build_dir, "gluebindings.rs"))?,
             )?;
         } else {
-            if env::var_os("CARGO_FEATURE_DEBUGMOZJS").is_none() {
-                let strip_bin = get_cc_rs_env_os("STRIP").unwrap_or_else(|| "strip".into());
-                // Strip symbols from the static binary since it could bump up to 1.6GB on Linux.
-                // TODO: Maybe we could separate symbols for those who still want the debug ability.
-                // https://github.com/GabrielMajeri/separate-symbols
-                let mut strip = Command::new(strip_bin);
-                if !target.contains("apple") {
-                    strip.arg("--strip-debug");
-                };
-                let status = strip
-                    .arg(join_path(build_dir, "js/src/build/libjs_static.a"))
-                    .status()?;
-                assert!(status.success());
-            }
+            let strip_bin = get_cc_rs_env_os("STRIP").unwrap_or_else(|| "strip".into());
+            // Strip symbols from the static binary since it could bump up to 1.6GB on Linux.
+            // Debug builds are also stripped because prebuilt archives only need the debug
+            // assertions, not the ability to debug SpiderMonkey internals.
+            let mut strip = Command::new(strip_bin);
+            if !target.contains("apple") {
+                strip.arg("--strip-debug");
+            };
+            let status = strip
+                .arg(join_path(build_dir, "js/src/build/libjs_static.a"))
+                .status()?;
+            assert!(status.success());
 
             // This is the static library of spidermonkey.
             tar.append_file(
@@ -1122,6 +1129,39 @@ mod archive {
         }
     }
 
+    /// Returns the GitHub repository slug (e.g. `servo/mozjs`) to use for
+    /// downloading archives and verifying attestations.
+    ///
+    /// Resolution order:
+    /// 1. `MOZJS_REPO` environment variable (explicit override)
+    /// 2. `CARGO_PKG_REPOSITORY` (baked into the crate at publish time, or
+    ///    inherited from the workspace `Cargo.toml` for git dependencies)
+    /// 3. Falls back to `servo/mozjs`
+    fn repo_slug() -> String {
+        if let Ok(repo) = env::var("MOZJS_REPO") {
+            return repo;
+        }
+
+        // Try to extract "owner/repo" from CARGO_PKG_REPOSITORY, which is set
+        // by Cargo from the `repository` field in Cargo.toml. This is baked in
+        // at publish time for crates.io, and comes from the fork's Cargo.toml
+        // for git dependencies.
+        if let Ok(url) = env::var("CARGO_PKG_REPOSITORY") {
+            // Handle URLs like "https://github.com/owner/repo" or
+            // "https://github.com/owner/repo/" with optional trailing slash.
+            if let Some(path) = url.strip_prefix("https://github.com/") {
+                let path = path.trim_end_matches('/');
+                // Validate it looks like "owner/repo" (exactly one slash).
+                if path.contains('/') && path.matches('/').count() == 1 && !path.starts_with('/')
+                {
+                    return path.to_string();
+                }
+            }
+        }
+
+        "servo/mozjs".to_string()
+    }
+
     /// Use GitHub artifact attestation to verify the artifact is not corrupt.
     fn attest_artifact(kind: AttestationType, archive_path: &Path) -> Result<(), std::io::Error> {
         let start = Instant::now();
@@ -1138,7 +1178,7 @@ mod archive {
             .arg("verify")
             .arg(&archive_path)
             .arg("-R")
-            .arg("servo/mozjs");
+            .arg(repo_slug());
 
         let attestation_duration = start.elapsed();
         eprintln!(
@@ -1163,9 +1203,11 @@ mod archive {
     }
 
     /// Download the SpiderMonkey archive with cURL using the provided base URL. If it's None,
-    /// it will use `servo/mozjs`'s release page as the base URL.
+    /// it will use the release page of the repository specified by `MOZJS_REPO` (defaulting
+    /// to `servo/mozjs`).
     pub(crate) fn download_archive(base: Option<&str>) -> Result<PathBuf, std::io::Error> {
-        let base = base.unwrap_or("https://github.com/servo/mozjs/releases");
+        let default_base = format!("https://github.com/{}/releases", repo_slug());
+        let base = base.unwrap_or(&default_base);
         let version = env::var("CARGO_PKG_VERSION").unwrap();
         let archive_path = PathBuf::from(env::var_os("OUT_DIR").unwrap()).join(&archive());
 

@@ -19,6 +19,7 @@ env:
   CARGO_INCREMENTAL: 0
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
   MOZJS_CREATE_ARCHIVE: 1
+  MOZJS_REPO: ${{ github.repository }}
   NEW_RUST_CHECK: ${{ inputs.rust_version == 'stable' || inputs.rust_version == 'beta' }}
   # Increase this version to purge sccache cache on GitHub Actions
   SCCACHE_GHA_VERSION: 2
@@ -169,6 +170,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        features: ["debugmozjs", ""]
         target:
           [
             "armv7-linux-androideabi",
@@ -193,13 +195,13 @@ jobs:
         env:
           ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: |
-          ./android-build cargo +${{ steps.toolchain.outputs.name }} build --target="${{ matrix.target }}"
+          ./android-build cargo +${{ steps.toolchain.outputs.name }} build --target="${{ matrix.target }}" --features "${{ matrix.features }}"
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         if: ${{ env.NEW_RUST_CHECK == 'false' }}
         with:
-          path: ./target/libmozjs-${{ matrix.target }}.tar.gz
-          name: libmozjs-${{ matrix.target }}.tar.gz
+          path: ./target/libmozjs-${{ matrix.target }}${{ matrix.features && '-debugmozjs' || '' }}.tar.gz
+          name: libmozjs-${{ matrix.target }}${{ matrix.features && '-debugmozjs' || '' }}.tar.gz
 
   ohos:
     name: "OpenHarmony"
@@ -229,10 +231,10 @@ jobs:
           ./ohos-build cargo +${{ steps.toolchain.outputs.name }} build --target="${{ matrix.target }}" ${{ matrix.features }}
       - name: Upload artifact
         uses: actions/upload-artifact@v4
-        if: ${{ env.NEW_RUST_CHECK == 'false' && matrix.features == '' }}
+        if: ${{ env.NEW_RUST_CHECK == 'false' }}
         with:
-          path: ./target/libmozjs-${{ matrix.target }}.tar.gz
-          name: libmozjs-${{ matrix.target }}.tar.gz
+          path: ./target/libmozjs-${{ matrix.target }}${{ matrix.features == '' && '' || '-debugmozjs' }}.tar.gz
+          name: libmozjs-${{ matrix.target }}${{ matrix.features == '' && '' || '-debugmozjs' }}.tar.gz
       - name: Test linking (build unit-tests)
         run: ./ohos-build cargo +${{ steps.toolchain.outputs.name }} build --target="${{ matrix.target }}" ${{ matrix.features }} --tests
 
@@ -242,6 +244,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        features: ["debugmozjs", ""]
         target:
           - wasip1
           - wasip2
@@ -263,22 +266,22 @@ jobs:
           mv wasi-sdk-25.0-x86_64-linux wasi-sdk
       - name: Build
         run: |
-          cargo +${{ steps.toolchain.outputs.name }} build --target=wasm32-${{ matrix.target }}
+          cargo +${{ steps.toolchain.outputs.name }} build --target=wasm32-${{ matrix.target }} --features "${{ matrix.features }}"
         env:
           WASI_SDK_PATH: "/tmp/wasi-sdk"
       - name: Test
         run: |
           export CARGO_TARGET_WASM32_WASIP1_RUNNER="wasmtime run --dir=$PWD::/cwd"
           export CARGO_TARGET_WASM32_WASIP2_RUNNER="wasmtime run --dir=$PWD::/cwd"
-          cargo +${{ steps.toolchain.outputs.name }} test --tests --examples --target=wasm32-${{ matrix.target }}
+          cargo +${{ steps.toolchain.outputs.name }} test --tests --examples --target=wasm32-${{ matrix.target }} --features "${{ matrix.features }}"
         env:
           WASI_SDK_PATH: "/tmp/wasi-sdk"
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         if: ${{ env.NEW_RUST_CHECK == 'false' }}
         with:
-          path: ./target/libmozjs-wasm32-${{ matrix.target }}.tar.gz
-          name: libmozjs-wasm32-${{ matrix.target }}.tar.gz
+          path: ./target/libmozjs-wasm32-${{ matrix.target }}${{ matrix.features && '-debugmozjs' || '' }}.tar.gz
+          name: libmozjs-wasm32-${{ matrix.target }}${{ matrix.features && '-debugmozjs' || '' }}.tar.gz
 
   linux-cross-compile:
     name: linux (${{ matrix.target }})
@@ -374,7 +377,7 @@ jobs:
 
   verify-release-artifacts:
     name: Verify release artifacts
-    needs: ["android", "linux", "mac", "ohos", "windows"]
+    needs: ["android", "linux", "mac", "ohos", "wasi", "windows"]
     if: ${{  inputs.verify_artifacts && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') }}
     uses: ./.github/workflows/release-check.yml
     with:
@@ -391,6 +394,7 @@ jobs:
         "linux-cross-compile",
         "mac",
         "ohos",
+        "wasi",
         "windows",
         "integrity",
         "verify-release-artifacts",

@@ -16,6 +16,7 @@ env:
   RUST_BACKTRACE: 1
   SHELL: /bin/bash
   CARGO_INCREMENTAL: 0
+  MOZJS_REPO: ${{ github.repository }}
   RUST_TOOLCHAIN_INPUT: ${{ github.event_name == 'release' && '1.85.0' ||  inputs.rust_version }}
 
 jobs:
@@ -66,6 +67,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
+        features: ["debugmozjs", ""]
         target:
           [
             "armv7-linux-androideabi",
@@ -91,27 +93,28 @@ jobs:
         if: ${{ env.RELEASE_TAG == '' }}
         uses: actions/download-artifact@v4
         with:
-          name: libmozjs-${{ matrix.target }}.tar.gz
+          name: libmozjs-${{ matrix.target }}${{ matrix.features && '-debugmozjs' || '' }}.tar.gz
       - name: Build from archive
         if: ${{ env.RELEASE_TAG == '' }}
         env:
           ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
-          MOZJS_ARCHIVE: libmozjs-${{ matrix.target }}.tar.gz
+          MOZJS_ARCHIVE: libmozjs-${{ matrix.target }}${{ matrix.features && '-debugmozjs' || '' }}.tar.gz
         run: |
-          ./android-build cargo +${{ steps.toolchain.outputs.name }} build --target="${{ matrix.target }}" --verbose
+          ./android-build cargo +${{ steps.toolchain.outputs.name }} build --target="${{ matrix.target }}" --features "${{ matrix.features }}" --verbose
       - name: Build from auto-download (arch ${{ matrix.target }})
         if: ${{ env.RELEASE_TAG != '' }}
         env:
           ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
           MOZJS_ATTESTATION: strict
         run: |
-          ./android-build cargo +${{ steps.toolchain.outputs.name }} build --target="${{ matrix.target }}" --verbose
+          ./android-build cargo +${{ steps.toolchain.outputs.name }} build --target="${{ matrix.target }}" --features "${{ matrix.features }}" --verbose
 
   verify-archive-ohos:
     name: "Verify archive OpenHarmony"
     runs-on: ubuntu-latest
     strategy:
       matrix:
+        features: ["debugmozjs", ""]
         target: ["aarch64-unknown-linux-ohos", "x86_64-unknown-linux-ohos"]
     env:
       RELEASE_TAG: ${{ github.event_name == 'release' && github.ref_name ||  inputs.release-tag }}
@@ -132,18 +135,64 @@ jobs:
         if: ${{ env.RELEASE_TAG == '' }}
         uses: actions/download-artifact@v4
         with:
-          name: libmozjs-${{ matrix.target }}.tar.gz
+          name: libmozjs-${{ matrix.target }}${{ matrix.features && '-debugmozjs' || '' }}.tar.gz
       - name: Build from archive
         if: ${{ env.RELEASE_TAG == '' }}
         env:
           OHOS_SDK_NATIVE: ${{ steps.setup_sdk.outputs.ohos_sdk_native }}
-          MOZJS_ARCHIVE: libmozjs-${{ matrix.target }}.tar.gz
+          MOZJS_ARCHIVE: libmozjs-${{ matrix.target }}${{ matrix.features && '-debugmozjs' || '' }}.tar.gz
         run: |
-          ./ohos-build cargo +${{ steps.toolchain.outputs.name }} build --target="${{ matrix.target }}" --verbose
+          ./ohos-build cargo +${{ steps.toolchain.outputs.name }} build --target="${{ matrix.target }}" --features "${{ matrix.features }}" --verbose
       - name: Build from auto-download (arch ${{ matrix.target }})
         if: ${{ env.RELEASE_TAG != '' }}
         env:
           OHOS_SDK_NATIVE: ${{ steps.setup_sdk.outputs.ohos_sdk_native }}
           MOZJS_ATTESTATION: strict
         run: |
-          ./ohos-build cargo +${{ steps.toolchain.outputs.name }} build --target="${{ matrix.target }}" --verbose
+          ./ohos-build cargo +${{ steps.toolchain.outputs.name }} build --target="${{ matrix.target }}" --features "${{ matrix.features }}" --verbose
+
+  verify-archive-wasi:
+    name: "Verify archive WASI"
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        features: ["debugmozjs", ""]
+        target:
+          - wasip1
+          - wasip2
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'release' && github.ref_name ||  inputs.release-tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        id: toolchain
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN_INPUT }}
+          targets: "wasm32-${{ matrix.target }}"
+      - name: Install WASI-SDK
+        run: |
+          cd /tmp
+          curl --retry 5 --retry-all-errors -OL https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-25/wasi-sdk-25.0-x86_64-linux.tar.gz
+          tar -xzf wasi-sdk-25.0-x86_64-linux.tar.gz
+          mv wasi-sdk-25.0-x86_64-linux wasi-sdk
+      - name: Download prebuilt mozjs from artifact
+        if: ${{ env.RELEASE_TAG == '' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: libmozjs-wasm32-${{ matrix.target }}${{ matrix.features && '-debugmozjs' || '' }}.tar.gz
+      - name: Build from archive
+        if: ${{ env.RELEASE_TAG == '' }}
+        env:
+          WASI_SDK_PATH: "/tmp/wasi-sdk"
+          MOZJS_ARCHIVE: libmozjs-wasm32-${{ matrix.target }}${{ matrix.features && '-debugmozjs' || '' }}.tar.gz
+        run: |
+          cargo +${{ steps.toolchain.outputs.name }} build --target=wasm32-${{ matrix.target }} --features "${{ matrix.features }}" --verbose
+      - name: Build from auto-download
+        if: ${{ env.RELEASE_TAG != '' }}
+        env:
+          WASI_SDK_PATH: "/tmp/wasi-sdk"
+          MOZJS_ATTESTATION: strict
+        run: |
+          cargo +${{ steps.toolchain.outputs.name }} build --target=wasm32-${{ matrix.target }} --features "${{ matrix.features }}" --verbose

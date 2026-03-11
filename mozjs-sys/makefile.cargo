@@ -28,6 +28,11 @@ ifneq (,$(CARGO_FEATURE_DEBUGMOZJS))
 	ifneq (,$(findstring -wasi,$(TARGET)))
 		# wasm-opt chokes on -O0 builds.
 		CONFIGURE_FLAGS += --enable-optimize=-O1
+	else ifneq (,$(MOZJS_CREATE_ARCHIVE))
+		# When creating prebuilt archives, compile with -O3 for performance.
+		# Consumers of debug archives only need the debug assertions, not
+		# the ability to debug SpiderMonkey internals.
+		CONFIGURE_FLAGS += --enable-optimize=-O3
 	else
 		CONFIGURE_FLAGS += --disable-optimize
 	endif
