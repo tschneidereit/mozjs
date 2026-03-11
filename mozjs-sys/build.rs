@@ -438,10 +438,6 @@ fn link_static_lib_binaries(build_dir: &Path) {
         // needing to use the WASI-SDK's clang for linking, which is annoying.
         println!("cargo:rustc-link-lib=stdc++")
     }
-
-    if target.contains("wasi") {
-        println!("cargo:rustc-link-lib=wasi-emulated-getpid");
-    }
 }
 
 fn link_bindgen_static_lib_binaries(build_dir: &Path) {

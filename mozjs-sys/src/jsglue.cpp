@@ -1302,4 +1302,12 @@ JSString* const* StackGCVectorStringAtIndex(
   return vec.begin() + index;
 }
 
+#if defined(__wasi__)
+// WASI doesn't provide getpid(), but SpiderMonkey references it (e.g. via
+// MOZ_GET_PID() in assertions). The WASI SDK has wasi-emulated-getpid for
+// this, but requiring it at link time would defeat the purpose of prebuilt
+// archives. A stub returning a fixed value is sufficient.
+int getpid(void) { return 1; }
+#endif
+
 }  // extern "C"
