@@ -151,6 +151,45 @@ jobs:
         run: |
           ./ohos-build cargo +${{ steps.toolchain.outputs.name }} build --target="${{ matrix.target }}" --features "${{ matrix.features }}" --verbose
 
+  verify-archive-linux-cross:
+    name: "Verify archive linux (${{ matrix.target }})"
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        features: ["debugmozjs", ""]
+        target:
+          - aarch64-unknown-linux-gnu
+          - armv7-unknown-linux-gnueabihf
+    container: ghcr.io/servo/cross-${{ matrix.target }}:main
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'release' && github.ref_name || inputs.release-tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        id: toolchain
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN_INPUT }}
+          targets: ${{ matrix.target }}
+      - name: Download prebuilt mozjs from artifact
+        if: ${{ env.RELEASE_TAG == '' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: libmozjs-${{ matrix.target }}${{ matrix.features && '-debugmozjs' || '' }}.tar.gz
+      - name: Build from archive
+        if: ${{ env.RELEASE_TAG == '' }}
+        env:
+          MOZJS_ARCHIVE: libmozjs-${{ matrix.target }}${{ matrix.features && '-debugmozjs' || '' }}.tar.gz
+        run: |
+          cargo +${{ steps.toolchain.outputs.name }} build --verbose --target ${{ matrix.target }} --features "${{ matrix.features }}"
+      - name: Build from auto-download
+        if: ${{ env.RELEASE_TAG != '' }}
+        env:
+          MOZJS_ATTESTATION: strict
+        run: |
+          cargo +${{ steps.toolchain.outputs.name }} build --verbose --target ${{ matrix.target }} --features "${{ matrix.features }}"
+
   verify-archive-wasi:
     name: "Verify archive WASI"
     runs-on: ubuntu-latest

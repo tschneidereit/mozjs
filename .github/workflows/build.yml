@@ -286,9 +286,12 @@ jobs:
   linux-cross-compile:
     name: linux (${{ matrix.target }})
     runs-on: ubuntu-latest
+    env:
+      MOZJS_CREATE_ARCHIVE: 1
     strategy:
       fail-fast: false
       matrix:
+        features: ["debugmozjs", ""]
         target:
           - aarch64-unknown-linux-gnu
           - armv7-unknown-linux-gnueabihf
@@ -302,7 +305,16 @@ jobs:
           toolchain: ${{ inputs.rust_version }}
           targets: ${{ matrix.target }}
           components: "rustfmt"
-      - run: cargo +${{ steps.toolchain.outputs.name }} test --tests --examples --target ${{ matrix.target }}
+      - name: Build
+        run: |
+          cargo +${{ steps.toolchain.outputs.name }} build --verbose --target ${{ matrix.target }} --features "${{ matrix.features }}"
+          cargo +${{ steps.toolchain.outputs.name }} test --tests --examples --target ${{ matrix.target }} --features "${{ matrix.features }}"
+      - name: Upload artifact
+        if: ${{ env.NEW_RUST_CHECK == 'false' }}
+        uses: actions/upload-artifact@v4
+        with:
+          path: ./target/${{ matrix.target }}/libmozjs-${{ matrix.target }}${{ matrix.features && '-debugmozjs' || '' }}.tar.gz
+          name: libmozjs-${{ matrix.target }}${{ matrix.features && '-debugmozjs' || '' }}.tar.gz
 
   integrity:
     runs-on: ubuntu-latest
