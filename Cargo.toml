@@ -3,7 +3,7 @@ members = ["mozjs-sys", "mozjs"]
 resolver = "2"
 
 [workspace.package]
-repository = "https://github.com/servo/mozjs/"
+repository = "https://github.com/tschneidereit/mozjs"
 license = "MPL-2.0"
 edition = "2021"
 
