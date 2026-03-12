@@ -127,6 +127,12 @@ fn main() {
         // TODO: use this and remove `no-rust-unicode-bidi.patch`
         // cbindgen_bidi(&build_dir);
         build_spidermonkey(&build_dir);
+
+        // Copy js-confdefs.h into dist/include so C++ consumers get it.
+        let confdefs_src = join_path(&build_dir, "js/src/js-confdefs.h");
+        let confdefs_dst = join_path(&build_dir, "dist/include/js-confdefs.h");
+        fs::copy(&confdefs_src, &confdefs_dst)?;
+
         build(&build_dir, BuildTarget::JSApi);
         build_bindings(&build_dir, BuildTarget::JSApi);
         build(&build_dir, BuildTarget::JSGlue);
@@ -461,9 +467,15 @@ fn link_static_lib_binaries(build_dir: &Path) {
         println!("cargo:rustc-link-lib=c++");
     } else if target.contains("windows") && target.contains("gnu") {
         println!("cargo:rustc-link-lib=stdc++");
-    } else if !target.contains("windows") && !target.contains("wasi") {
-        // The build works without this for WASI, and specifying it means
-        // needing to use the WASI-SDK's clang for linking, which is annoying.
+    } else if target.contains("wasi") {
+        if let Some(sdk) = wasi_sdk() {
+            let sysroot_lib = Path::new(&sdk)
+                .join(format!("share/wasi-sysroot/lib/{target}"));
+            println!("cargo:rustc-link-search=native={}", sysroot_lib.display());
+        }
+        println!("cargo:rustc-link-lib=static=c++");
+        println!("cargo:rustc-link-lib=static=c++abi");
+    } else if !target.contains("windows") {
         println!("cargo:rustc-link-lib=stdc++")
     }
 }
@@ -1046,11 +1058,6 @@ mod archive {
         let tar_gz = File::create(format!("{}/{}", target_dir, archive()))?;
         let enc = GzEncoder::new(tar_gz, Compression::default());
         let mut tar = tar::Builder::new(enc);
-
-        // Copy js-confdefs.h into dist/include so C++ consumers get it.
-        let confdefs_src = join_path(build_dir, "js/src/js-confdefs.h");
-        let confdefs_dst = join_path(build_dir, "dist/include/js-confdefs.h");
-        fs::copy(&confdefs_src, &confdefs_dst)?;
 
         // Bundle the dist/include directory for C++ consumers.
         tar.append_dir_all("include", join_path(build_dir, "dist/include"))?;
