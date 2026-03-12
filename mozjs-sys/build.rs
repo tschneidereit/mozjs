@@ -131,7 +131,7 @@ fn main() {
         // Copy js-confdefs.h into dist/include so C++ consumers get it.
         let confdefs_src = join_path(&build_dir, "js/src/js-confdefs.h");
         let confdefs_dst = join_path(&build_dir, "dist/include/js-confdefs.h");
-        fs::copy(&confdefs_src, &confdefs_dst)?;
+        fs::copy(&confdefs_src, &confdefs_dst).unwrap();
 
         build(&build_dir, BuildTarget::JSApi);
         build_bindings(&build_dir, BuildTarget::JSApi);
@@ -469,8 +469,7 @@ fn link_static_lib_binaries(build_dir: &Path) {
         println!("cargo:rustc-link-lib=stdc++");
     } else if target.contains("wasi") {
         if let Some(sdk) = wasi_sdk() {
-            let sysroot_lib = Path::new(&sdk)
-                .join(format!("share/wasi-sysroot/lib/{target}"));
+            let sysroot_lib = Path::new(&sdk).join(format!("share/wasi-sysroot/lib/{target}"));
             println!("cargo:rustc-link-search=native={}", sysroot_lib.display());
         }
         println!("cargo:rustc-link-lib=static=c++");
