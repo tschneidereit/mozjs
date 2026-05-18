@@ -320,6 +320,43 @@ fn build(build_dir: &Path, target: BuildTarget) {
     let mut build = cc::Build::new();
     build.cpp(true).file(target.path());
 
+    // Suppress the automatic C++ stdlib link directives that the `cc` crate
+    // emits via `cargo:rustc-flags`. We handle C++ stdlib linking ourselves
+    // in `link_static_lib_binaries` to avoid adding the entire wasi-sysroot
+    // lib directory to the linker search path (which can shadow Rust's libc.a).
+    build.cpp_link_stdlib(None);
+
+    let target_str = env::var("TARGET").unwrap_or_default();
+    if target_str.contains("wasi") {
+        // The cc crate has an unconditional WASI-specific code path that emits
+        // `cargo:rustc-flags=-L {sysroot}/lib/{target} -lstatic=c++ -lstatic=c++abi`
+        // when WASI_SYSROOT is set. This adds the full wasi-sysroot/lib directory
+        // to the linker search path, causing its libc.a to shadow Rust's
+        // self-contained libc.a (which provides __wasi_init_tp on newer toolchains).
+        //
+        // We temporarily unset WASI_SYSROOT during compile() to prevent this,
+        // and pass --sysroot explicitly as a compiler flag so headers still resolve.
+        if let Ok(sysroot) = env::var("WASI_SYSROOT") {
+            build.flag(&format!("--sysroot={sysroot}"));
+            env::remove_var("WASI_SYSROOT");
+            // Defer compile to the end; restore WASI_SYSROOT afterward.
+            for flag in cc_flags(false) {
+                build.flag_if_supported(flag);
+            }
+            if let Ok(android_api) = env::var("ANDROID_API_LEVEL").as_deref() {
+                build.define("__ANDROID_MIN_SDK_VERSION__", android_api);
+            }
+            build.flag(include_file_flag(build.get_compiler().is_like_msvc()));
+            build.flag(&js_config_path(build_dir));
+            for path in target.include_paths(build_dir) {
+                build.include(path);
+            }
+            build.out_dir(build_dir).compile(target.output());
+            env::set_var("WASI_SYSROOT", sysroot);
+            return;
+        }
+    }
+
     for flag in cc_flags(false) {
         build.flag_if_supported(flag);
     }
@@ -470,7 +507,20 @@ fn link_static_lib_binaries(build_dir: &Path) {
     } else if target.contains("wasi") {
         if let Some(sdk) = wasi_sdk() {
             let sysroot_lib = Path::new(&sdk).join(format!("share/wasi-sysroot/lib/{target}"));
-            println!("cargo:rustc-link-search=native={}", sysroot_lib.display());
+            // Copy only the C++ libraries to the build directory instead of adding
+            // the entire sysroot lib path. The sysroot also contains libc.a, which
+            // can shadow the Rust sysroot's libc.a and cause missing symbols
+            // (e.g. __wasi_init_tp) on newer Rust toolchains.
+            let cxx_dir = build_dir.join("wasi-cxx-libs");
+            let _ = fs::create_dir_all(&cxx_dir);
+            for lib in &["libc++.a", "libc++abi.a"] {
+                let src = sysroot_lib.join(lib);
+                let dst = cxx_dir.join(lib);
+                if src.exists() {
+                    let _ = fs::copy(&src, &dst);
+                }
+            }
+            println!("cargo:rustc-link-search=native={}", cxx_dir.display());
         }
         println!("cargo:rustc-link-lib=static=c++");
         println!("cargo:rustc-link-lib=static=c++abi");

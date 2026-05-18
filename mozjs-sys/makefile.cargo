@@ -96,12 +96,18 @@ ifneq ($(HOST),$(TARGET))
             $(error WASI_SDK_PATH environment variable must be set when building for wasm32)
         endif
         WASI_SYSROOT = $(WASI_SDK_PATH)/share/wasi-sysroot
-        CC = $(WASI_SDK_PATH)/bin/clang
-        CPP = $(WASI_SDK_PATH)/bin/clang -E
-        CXX = $(WASI_SDK_PATH)/bin/clang++
+        CC = $(WASI_SDK_PATH)/bin/clang --target=$(TARGET)
+        CPP = $(WASI_SDK_PATH)/bin/clang --target=$(TARGET) -E
+        CXX = $(WASI_SDK_PATH)/bin/clang++ --target=$(TARGET)
         AR = $(WASI_SDK_PATH)/bin/ar
         HOST_CC = clang
         HOST_CXX = clang++
+        # Disable libc++ visibility annotations to avoid conflicts with
+        # SpiderMonkey's `gcc_hidden.h` (which pushes hidden visibility globally),
+        # which became a hard error in clang 22 (wasi-sdk 32+).
+        # Note: We currently don't support shared library builds on wasm32,
+		# so this workaround is okay for now.
+        CXXFLAGS += -D_LIBCPP_DISABLE_VISIBILITY_ANNOTATIONS
         CONFIGURE_FLAGS += \
             --enable-portable-baseline-interp \
             --disable-clang-plugin \
