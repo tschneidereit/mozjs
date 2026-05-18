@@ -505,21 +505,39 @@ fn link_static_lib_binaries(build_dir: &Path) {
     } else if target.contains("windows") && target.contains("gnu") {
         println!("cargo:rustc-link-lib=stdc++");
     } else if target.contains("wasi") {
+        let cxx_dir = build_dir.join("wasi-cxx-libs");
         if let Some(sdk) = wasi_sdk() {
-            let sysroot_lib = Path::new(&sdk).join(format!("share/wasi-sysroot/lib/{target}"));
+            // Try the exact target triple first, then fall back to alternative
+            // sysroot lib paths used by different wasi-sdk versions.
+            let sdk_path = Path::new(&sdk);
+            let candidates = [
+                sdk_path.join(format!("share/wasi-sysroot/lib/{target}")),
+                sdk_path.join(format!("share/wasi-sysroot/lib/{target}/noeh")),
+                sdk_path.join("share/wasi-sysroot/lib/wasm32-wasi"),
+                sdk_path.join("share/wasi-sysroot/lib/wasm32-wasip1"),
+                sdk_path.join("share/wasi-sysroot/lib/wasm32-wasip2"),
+                sdk_path.join("share/wasi-sysroot/lib/wasm32-wasip2/noeh"),
+            ];
+            let sysroot_lib = candidates.iter().find(|p| p.join("libc++.a").exists());
             // Copy only the C++ libraries to the build directory instead of adding
             // the entire sysroot lib path. The sysroot also contains libc.a, which
             // can shadow the Rust sysroot's libc.a and cause missing symbols
             // (e.g. __wasi_init_tp) on newer Rust toolchains.
-            let cxx_dir = build_dir.join("wasi-cxx-libs");
             let _ = fs::create_dir_all(&cxx_dir);
-            for lib in &["libc++.a", "libc++abi.a"] {
-                let src = sysroot_lib.join(lib);
-                let dst = cxx_dir.join(lib);
-                if src.exists() {
-                    let _ = fs::copy(&src, &dst);
+            if let Some(sysroot_lib) = sysroot_lib {
+                for lib in &["libc++.a", "libc++abi.a"] {
+                    let src = sysroot_lib.join(lib);
+                    let dst = cxx_dir.join(lib);
+                    if src.exists() {
+                        let _ = fs::copy(&src, &dst);
+                    }
                 }
             }
+            println!("cargo:rustc-link-search=native={}", cxx_dir.display());
+        } else if cxx_dir.join("libc++.a").exists()
+            && cxx_dir.join("libc++abi.a").exists()
+        {
+            // No WASI SDK available; use libs from the prebuilt archive.
             println!("cargo:rustc-link-search=native={}", cxx_dir.display());
         }
         println!("cargo:rustc-link-lib=static=c++");
@@ -1174,6 +1192,18 @@ mod archive {
                 "gluebindings.rs",
                 &mut File::open(join_path(build_dir, "gluebindings.rs"))?,
             )?;
+        }
+
+        // Include wasi-cxx-libs for WASI targets so downstream consumers
+        // don't need a WASI SDK installation just to link.
+        if target.contains("wasi") {
+            let cxx_dir = build_dir.join("wasi-cxx-libs");
+            for lib in &["libc++.a", "libc++abi.a"] {
+                let src = cxx_dir.join(lib);
+                if src.exists() {
+                    tar.append_file(format!("wasi-cxx-libs/{lib}"), &mut File::open(&src)?)?;
+                }
+            }
         }
 
         Ok(())
