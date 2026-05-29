@@ -72,6 +72,9 @@ fn main() {
             "TARGET_CXX",
             PathBuf::from(&path).join("bin").join("clang++"),
         );
+        // Use the WASI SDK's libclang for bindgen (runtime-loaded via clang-sys).
+        // The SDK's C++ headers require clang 19+ builtins; system clang is often older.
+        env::set_var("LIBCLANG_PATH", PathBuf::from(&path).join("lib"));
     }
 
     let out_dir = PathBuf::from(env::var_os("OUT_DIR").unwrap());
@@ -85,9 +88,37 @@ fn main() {
     let mut lib_dir = build_dir.clone();
     if !build_from_source {
         if let Ok(archive) = env::var("MOZJS_ARCHIVE") {
-            // If the archive variable is present, assume it's a URL base to download from.
-            let archive =
-                archive::download_archive(Some(&archive)).unwrap_or(PathBuf::from(archive));
+            let archive_is_debug = archive.contains("-debugmozjs");
+            let feature_is_debug = env::var_os("CARGO_FEATURE_DEBUGMOZJS").is_some();
+            if archive_is_debug != feature_is_debug {
+                panic!(
+                    "MOZJS_ARCHIVE debug/release mismatch: archive `{archive}` is a {} build, \
+                     but the `debugmozjs` feature is {}. The archive's prebuilt bindings must \
+                     match the feature. Use a {}archive, or {} the `debugmozjs` feature.",
+                    if archive_is_debug { "debug" } else { "release" },
+                    if feature_is_debug {
+                        "enabled"
+                    } else {
+                        "disabled"
+                    },
+                    if feature_is_debug {
+                        "-debugmozjs "
+                    } else {
+                        "release (no -debugmozjs) "
+                    },
+                    if archive_is_debug {
+                        "enable"
+                    } else {
+                        "disable"
+                    },
+                );
+            }
+            let archive = if archive.starts_with("http://") || archive.starts_with("https://") {
+                archive::download_url(&archive).expect("Failed to download MOZJS_ARCHIVE URL")
+            } else {
+                eprintln!("Using local prebuilt mozjs static library from {archive}");
+                PathBuf::from(&archive)
+            };
             // Panic directly since the archive is specified manually.
             lib_dir = archive::decompress_static_lib(&archive).unwrap();
         } else {
@@ -402,9 +433,27 @@ fn build_bindings(build_dir: &Path, target: BuildTarget) {
         .clang_args(cc_flags(true));
 
     if env::var("TARGET").unwrap().contains("wasi") {
+        let target = env::var("TARGET").unwrap();
         builder = builder
             .clang_arg("--sysroot")
-            .clang_arg(env::var("WASI_SYSROOT").unwrap().to_string());
+            .clang_arg(env::var("WASI_SYSROOT").unwrap().to_string())
+            .clang_arg(format!("--target={}", target));
+
+        // System clang doesn't know about WASI's target-specific C++ include
+        // paths. Add them explicitly so headers like <utility> can be found.
+        if let Some(sdk) = wasi_sdk() {
+            let sdk_path = PathBuf::from(sdk);
+            for dir in [
+                sdk_path.join(format!("share/wasi-sysroot/include/{}/noeh/c++/v1", target)),
+                sdk_path.join(format!("share/wasi-sysroot/include/{}/c++/v1", target)),
+                sdk_path.join("share/wasi-sysroot/include/c++/v1"),
+            ] {
+                if dir.exists() {
+                    let dir_str = dir.display().to_string();
+                    builder = builder.clang_arg("-isystem").clang_arg(dir_str);
+                }
+            }
+        }
     }
 
     if target == BuildTarget::JSGlue {
@@ -534,9 +583,7 @@ fn link_static_lib_binaries(build_dir: &Path) {
                 }
             }
             println!("cargo:rustc-link-search=native={}", cxx_dir.display());
-        } else if cxx_dir.join("libc++.a").exists()
-            && cxx_dir.join("libc++abi.a").exists()
-        {
+        } else if cxx_dir.join("libc++.a").exists() && cxx_dir.join("libc++abi.a").exists() {
             // No WASI SDK available; use libs from the prebuilt archive.
             println!("cargo:rustc-link-search=native={}", cxx_dir.display());
         }
@@ -641,11 +688,13 @@ fn cc_flags(bindgen: bool) -> Vec<&'static str> {
         if !bindgen {
             let creating_archive = env::var_os("MOZJS_CREATE_ARCHIVE").is_some();
             if creating_archive {
-                // When creating prebuilt archives, compile with -O3 for performance.
-                // Consumers of debug archives only need the debug assertions, not
-                // the ability to debug SpiderMonkey internals.
+                // When creating prebuilt archives, compile with -O3 and suppress
+                // debug info. Consumers only need the debug assertions; symbol
+                // table entries (function names) are retained by the post-build
+                // strip step so stack traces remain readable.
                 if !target.contains("windows") {
                     flags.push("-O3");
+                    flags.push("-g0");
                 }
             } else if target.contains("windows") {
                 flags.push("-Od");
@@ -1155,18 +1204,43 @@ mod archive {
                 &mut File::open(join_path(build_dir, "gluebindings.rs"))?,
             )?;
         } else {
-            let strip_bin = get_cc_rs_env_os("STRIP").unwrap_or_else(|| "strip".into());
-            // Strip symbols from the static binary since it could bump up to 1.6GB on Linux.
-            // Debug builds are also stripped because prebuilt archives only need the debug
-            // assertions, not the ability to debug SpiderMonkey internals.
-            let mut strip = Command::new(strip_bin);
-            if !target.contains("apple") {
-                strip.arg("--strip-debug");
+            // Strip debug info from all static libraries before archiving
+            // for debug builds. Release builds for WASI are built with
+            // `--lto=thin` and contain LLVM bitcode, for which debug symbols
+            // can't be stripped.
+            let strip_libs: Vec<PathBuf> = if target.contains("wasi") {
+                if env::var_os("CARGO_FEATURE_DEBUGMOZJS").is_some() {
+                    // jsapi/jsglue are compiled with -g0 (cc_flags) so only
+                    // libjs_static.a carries debug info that needs stripping.
+                    vec![join_path(build_dir, "js/src/build/libjs_static.a")]
+                } else {
+                    vec![]
+                }
+            } else {
+                vec![
+                    join_path(build_dir, "js/src/build/libjs_static.a"),
+                    join_path(build_dir, "libjsapi.a"),
+                    join_path(build_dir, "libjsglue.a"),
+                ]
             };
-            let status = strip
-                .arg(join_path(build_dir, "js/src/build/libjs_static.a"))
-                .status()?;
-            assert!(status.success());
+            // Use WASI-SDK's llvm-strip for WASI targets, and host strip for native targets.
+            let strip_bin: std::ffi::OsString = if target.contains("wasi") {
+                super::wasi_sdk()
+                    .map(|sdk| PathBuf::from(sdk).join("bin/llvm-strip").into_os_string())
+                    .unwrap_or_else(|| "llvm-strip".into())
+            } else {
+                get_cc_rs_env_os("STRIP").unwrap_or_else(|| "strip".into())
+            };
+            for lib in &strip_libs {
+                let mut strip = Command::new(&strip_bin);
+                if target.contains("apple") {
+                    strip.arg("-S");
+                } else {
+                    strip.arg("--strip-debug");
+                }
+                let status = strip.arg(lib).status()?;
+                assert!(status.success());
+            }
 
             // This is the static library of spidermonkey.
             tar.append_file(
@@ -1352,6 +1426,39 @@ mod archive {
         Ok(())
     }
 
+    fn curl_download(url: &str, dest: &Path) -> Result<(), std::io::Error> {
+        eprintln!("Downloading prebuilt mozjs static library from {url}");
+        let start = Instant::now();
+        if !Command::new("curl")
+            .args(["-L", "-f", "-s", "-o"])
+            .arg(dest)
+            .arg(url)
+            .status()?
+            .success()
+        {
+            let _ = fs::remove_file(dest);
+            return Err(std::io::Error::from(std::io::ErrorKind::NotFound));
+        }
+        eprintln!("Download finished in {} ms", start.elapsed().as_millis());
+        Ok(())
+    }
+
+    /// Download a specific URL with cURL to the cache directory.
+    ///
+    /// The filename is taken from the last path component of the URL.
+    pub(crate) fn download_url(url: &str) -> Result<PathBuf, std::io::Error> {
+        let filename = url.rsplit('/').next().unwrap_or("archive.tar.gz");
+        let cache = cache_dir();
+        fs::create_dir_all(&cache)?;
+        let archive_path = cache.join(filename);
+
+        if !archive_path.exists() {
+            curl_download(url, &archive_path)?;
+        }
+
+        Ok(archive_path)
+    }
+
     /// Download the SpiderMonkey archive with cURL using the provided base URL. If it's None,
     /// it will use the release page of the repository specified by `MOZJS_REPO` (defaulting
     /// to `servo/mozjs`).
@@ -1368,29 +1475,8 @@ mod archive {
         let archive_path = cache.join(&archive());
 
         if !archive_path.exists() {
-            eprintln!("Trying to download prebuilt mozjs static library from Github Releases");
-            let curl_start = Instant::now();
-            if !Command::new("curl")
-                .arg("-L")
-                .arg("-f")
-                .arg("-s")
-                .arg("-o")
-                .arg(&archive_path)
-                .arg(format!(
-                    "{base}/download/mozjs-sys-v{version}/{}",
-                    archive()
-                ))
-                .status()?
-                .success()
-            {
-                // Clean up partial download.
-                let _ = fs::remove_file(&archive_path);
-                return Err(std::io::Error::from(std::io::ErrorKind::NotFound));
-            }
-            eprintln!(
-                "Successfully downloaded mozjs archive in {} ms",
-                curl_start.elapsed().as_millis()
-            );
+            let url = format!("{base}/download/mozjs-sys-v{version}/{}", archive());
+            curl_download(&url, &archive_path)?;
             let attestation = ArtifactAttestation::from_env();
             if let ArtifactAttestation::Enabled(kind) = attestation {
                 attest_artifact(kind, &archive_path)?;
