@@ -60,12 +60,25 @@ pub struct CustomAutoRooter<T> {
 }
 
 impl<T> CustomAutoRooter<T> {
-    unsafe fn add_to_root_stack(&mut self, cx: *mut JSContext) {
+    pub unsafe fn add_to_root_stack(&mut self, cx: *mut JSContext) {
         self._base._base.add_to_root_stack(cx);
     }
 
-    unsafe fn remove_from_root_stack(&mut self) {
+    pub unsafe fn remove_from_root_stack(&mut self) {
         self._base._base.remove_from_root_stack();
+    }
+}
+
+impl<T: CustomTrace> Deref for CustomAutoRooter<T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        &self.data
+    }
+}
+
+impl<T: CustomTrace> DerefMut for CustomAutoRooter<T> {
+    fn deref_mut(&mut self) -> &mut T {
+        &mut self.data
     }
 }
 

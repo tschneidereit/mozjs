@@ -317,7 +317,7 @@ impl Runtime {
 
     /// Creates a new `JSContext`.
     pub fn new(engine: JSEngineHandle) -> Runtime {
-        unsafe { Self::create(engine, None) }
+        unsafe { Self::create(engine, None, false) }
     }
 
     /// Signal that a new child runtime will be created in the future, and ensure
@@ -333,6 +333,18 @@ impl Runtime {
         }
     }
 
+    /// Creates a new `JSContext` that uses SpiderMonkey's internal job queue.
+    ///
+    /// # Safety
+    /// If a parent runtime is given, it must outlive the new runtime, or its
+    /// destructor will assert.
+    pub unsafe fn create_with_internal_job_queues(
+        engine: JSEngineHandle,
+        parent: Option<ParentRuntime>,
+    ) -> Runtime {
+        Self::create(engine, parent, true)
+    }
+
     /// Creates a new `JSContext` with a parent runtime. If the parent does not outlive
     /// the new runtime, its destructor will assert.
     ///
@@ -341,10 +353,14 @@ impl Runtime {
     /// continue executing after the thread with the parent runtime panics, but they
     /// will be in an invalid and undefined state.
     pub unsafe fn create_with_parent(parent: ParentRuntime) -> Runtime {
-        Self::create(parent.engine.clone(), Some(parent))
+        Self::create(parent.engine.clone(), Some(parent), false)
     }
 
-    unsafe fn create(engine: JSEngineHandle, parent: Option<ParentRuntime>) -> Runtime {
+    unsafe fn create(
+        engine: JSEngineHandle,
+        parent: Option<ParentRuntime>,
+        use_internal_job_queues: bool,
+    ) -> Runtime {
         let parent_runtime = parent.as_ref().map_or(ptr::null_mut(), |r| r.parent);
         let js_context = NonNull::new(JS_NewContext(
             default_heapsize + (ChunkSize as u32),
@@ -377,6 +393,15 @@ impl Runtime {
         let cache = crate::jsapi::__BindgenOpaqueArray::<u64, 2>::default();
         #[cfg(target_pointer_width = "32")]
         let cache = crate::jsapi::__BindgenOpaqueArray::<u32, 2>::default();
+
+        // The internal job queue must be enabled before self-hosted code is
+        // initialized.
+        if use_internal_job_queues {
+            assert!(
+                js::UseInternalJobQueues(js_context.as_ptr()),
+                "UseInternalJobQueues failed"
+            );
+        }
 
         InitSelfHostedCode(js_context.as_ptr(), cache, None);
 
