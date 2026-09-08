@@ -2,6 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "mozilla/intl/ICU4XProvider.h"
 #include "builtin/temporal/Calendar.h"
 
 #include "mozilla/Assertions.h"
@@ -614,7 +615,8 @@ using UniqueICU4XCalendar =
     mozilla::UniquePtr<icu4x::capi::Calendar, ICU4XCalendarDeleter>;
 
 static UniqueICU4XCalendar CreateICU4XCalendar(CalendarId id) {
-  auto* result = icu4x::capi::icu4x_Calendar_create_mv1(ToAnyCalendarKind(id));
+  auto* result = mozilla::intl::icu4x_provider::icu4x_Calendar_create_mv1(
+      ToAnyCalendarKind(id));
   MOZ_ASSERT(result, "unexpected null-pointer result");
   return UniqueICU4XCalendar{result};
 }

@@ -21,6 +21,8 @@ libz-rs = ["mozjs_sys/libz-rs"]
 intl = ["mozjs_sys/intl"]
 # Suppresses the ICU data embedded by default. See mozjs-sys.
 external-icu-data = ["mozjs_sys/external-icu-data"]
+# Chinese and Japanese word segmentation. See mozjs-sys.
+segmenter-cjk = ["mozjs_sys/segmenter-cjk"]
 crown = ["mozjs_sys/crown"]
 
 

@@ -9,9 +9,10 @@ edition = "2021"
 rust-version.workspace = true
 
 [dependencies]
-icu_properties = "2.1.2"
+icu_properties = { version = "2.1.2", default-features = false, features = ["alloc", "serde"] }
 icu_collections = { features = ["alloc"], package = "mozjs_icu_collections", version = "=153.0.0", path = "../icu_collections" }
-icu_casemap = "2"
+icu_casemap = { version = "2", default-features = false, features = ["serde"] }
+icu_provider_glue = { package = "mozjs_icu_provider_glue", version = "=153.0.0", path = "../icu_provider_glue" }
 
 [build-dependencies.cbindgen]
 version = "0.29.4"

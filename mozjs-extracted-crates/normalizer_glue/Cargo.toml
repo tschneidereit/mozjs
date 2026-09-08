@@ -8,7 +8,8 @@ edition = "2021"
 license = "MPL-2.0"
 
 [dependencies]
-icu_normalizer = { package = "mozjs_icu_normalizer", version = "=153.0.0", path = "../icu_normalizer", features = ["compiled_data", "utf16_iter", "latin1"] }
+icu_normalizer = { package = "mozjs_icu_normalizer", version = "=153.0.0", path = "../icu_normalizer", default-features = false, features = ["serde", "utf16_iter", "latin1"] }
+icu_provider_glue = { package = "mozjs_icu_provider_glue", version = "=153.0.0", path = "../icu_provider_glue" }
 write16 = { version  = "1.0", features = ["smallvec"] }
 smallvec = "1.9.0"
 encoding_rs = "0.8"

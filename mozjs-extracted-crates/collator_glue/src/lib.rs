@@ -13,7 +13,7 @@ use icu_collator::options::CaseLevel;
 use icu_collator::options::Strength;
 use icu_collator::preferences::CollationCaseFirst;
 use icu_collator::preferences::CollationNumericOrdering;
-use icu_collator::CollatorBorrowed;
+use icu_collator::Collator;
 use icu_collator::CollatorPreferences;
 use icu_locale_core::subtags::language;
 use icu_locale_core::subtags::script;
@@ -237,7 +237,7 @@ pub unsafe extern "C" fn mozilla_collator_glue_collator_try_new(
     locale: *const c_char,
     locale_len: usize,
     options: crate::CollatorOptions,
-) -> *mut CollatorBorrowed<'static> {
+) -> *mut Collator {
     if locale_len == 0 {
         return core::ptr::null_mut();
     }
@@ -291,26 +291,32 @@ pub unsafe extern "C" fn mozilla_collator_glue_collator_try_new(
     // `unwrap` is OK below, because `CollatorBorrowed::try_new`` never
     // fails with properly-generated baked data.
     // See https://github.com/unicode-org/icu4x/issues/6634
+    // `unwrap` is OK below: the blob is generated with the collation data this
+    // asks for, so a failure here means a mismatched blob, not a runtime
+    // condition.
     Box::into_raw(Box::new(
-        CollatorBorrowed::try_new(prefs, collator_options).unwrap(),
+        Collator::try_new_with_buffer_provider(
+            icu_provider_glue::provider(),
+            prefs,
+            collator_options,
+        )
+        .unwrap(),
     ))
 }
 
 /// Deleter for values previously obtained from
 /// `mozilla_collator_glue_collator_try_new`.
 #[no_mangle]
-pub unsafe extern "C" fn mozilla_collator_glue_collator_free(
-    collator: *mut CollatorBorrowed<'static>,
-) {
+pub unsafe extern "C" fn mozilla_collator_glue_collator_free(collator: *mut Collator) {
     let _ = Box::from_raw(collator);
 }
 
 /// Returns the resolved options of the collator.
 #[no_mangle]
 pub unsafe extern "C" fn mozilla_collator_glue_collator_resolved_options(
-    collator: *const CollatorBorrowed<'static>,
+    collator: *const Collator,
 ) -> CollatorOptions {
-    let resolved = (*collator).resolved_options();
+    let resolved = (*collator).as_borrowed().resolved_options();
 
     CollatorOptions {
         sensitivity: match resolved.strength {
@@ -358,13 +364,13 @@ pub unsafe extern "C" fn mozilla_collator_glue_collator_resolved_options(
 /// be changed on the mozilla::Span side eventually.
 #[no_mangle]
 pub unsafe extern "C" fn mozilla_collator_glue_collator_compare_utf16(
-    collator: *const CollatorBorrowed<'static>,
+    collator: *const Collator,
     left: *const u16,
     left_len: usize,
     right: *const u16,
     right_len: usize,
 ) -> i32 {
-    (*collator).compare_utf16(
+    (*collator).as_borrowed().compare_utf16(
         core::slice::from_raw_parts(left, left_len),
         core::slice::from_raw_parts(right, right_len),
     ) as i32
@@ -379,13 +385,13 @@ pub unsafe extern "C" fn mozilla_collator_glue_collator_compare_utf16(
 /// be changed on the mozilla::Span side eventually.
 #[no_mangle]
 pub unsafe extern "C" fn mozilla_collator_glue_collator_compare_latin1(
-    collator: *const CollatorBorrowed<'static>,
+    collator: *const Collator,
     left: *const u8,
     left_len: usize,
     right: *const u8,
     right_len: usize,
 ) -> i32 {
-    (*collator).compare_latin1(
+    (*collator).as_borrowed().compare_latin1(
         core::slice::from_raw_parts(left, left_len),
         core::slice::from_raw_parts(right, right_len),
     ) as i32
@@ -400,13 +406,13 @@ pub unsafe extern "C" fn mozilla_collator_glue_collator_compare_latin1(
 /// be changed on the mozilla::Span side eventually.
 #[no_mangle]
 pub unsafe extern "C" fn mozilla_collator_glue_collator_compare_latin1_utf16(
-    collator: *const CollatorBorrowed<'static>,
+    collator: *const Collator,
     left: *const u8,
     left_len: usize,
     right: *const u16,
     right_len: usize,
 ) -> i32 {
-    (*collator).compare_latin1_utf16(
+    (*collator).as_borrowed().compare_latin1_utf16(
         core::slice::from_raw_parts(left, left_len),
         core::slice::from_raw_parts(right, right_len),
     ) as i32
@@ -429,6 +435,40 @@ pub unsafe extern "C" fn mozilla_collator_glue_is_supported_collation(
     )
 }
 
+/// The locale and collation pairs the data blob holds.
+///
+/// Replaces `icu_collator::provider::list_locales`, which reads the baked data
+/// directly and so exists only under `compiled_data`. The iterator may yield
+/// duplicates, which the caller already collects into a set.
+fn data_locales() -> impl Iterator<Item = (DataLocale, TinyAsciiStr<8>)> {
+    use icu_collator::provider::{
+        CollationDiacriticsV1, CollationMetadataV1, CollationReorderingV1, CollationTailoringV1,
+    };
+    use icu_provider::buf::BufferMarker;
+    use icu_provider::prelude::*;
+    use icu_provider::IterableDynamicDataProvider;
+
+    let provider = icu_provider_glue::provider();
+    [
+        CollationMetadataV1::INFO,
+        CollationTailoringV1::INFO,
+        CollationReorderingV1::INFO,
+        CollationDiacriticsV1::INFO,
+    ]
+    .into_iter()
+    .flat_map(move |marker| {
+        IterableDynamicDataProvider::<BufferMarker>::iter_ids_for_marker(provider, marker)
+            .expect("the ICU4X data blob has no collation data")
+    })
+    .map(|id| {
+        (
+            id.locale.clone(),
+            TinyAsciiStr::<8>::try_from_str(id.marker_attributes.as_str())
+                .expect("Marker attribute invariants upheld"),
+        )
+    })
+}
+
 fn get_lang_coll_combinations() -> &'static [LangColl] {
     LANG_COLL_COMBINATIONS.get_or_init(|| {
         let mut set: HashSet<LangColl> = HashSet::new();
@@ -436,7 +476,7 @@ fn get_lang_coll_combinations() -> &'static [LangColl] {
         let mut eor_seen = false;
         #[cfg(debug_assertions)]
         let mut emoji_seen = false;
-        for (loc, collation) in icu_collator::provider::list_locales() {
+        for (loc, collation) in data_locales() {
             if collation.is_empty() || collation.as_str() == "search" {
                 continue;
             }
@@ -522,11 +562,14 @@ pub struct LocaleList {
 }
 
 /// Converts from ICU4X `DataLocale` to `TinyLocaleStr`.
-fn data_locale_to_tiny(loc: DataLocale) -> TinyLocaleStr {
+///
+/// Returns `None` for a locale too long to represent, which ECMA-402 could not
+/// report anyway. The data holds one: `en-US-posix`, at 11 characters. The
+/// ICU4C package drops it too, through the `locales_tree` filter.
+fn data_locale_to_tiny(loc: DataLocale) -> Option<TinyLocaleStr> {
     let mut buf: ArrayLocale = ArrayLocale::new();
-    loc.write_to(&mut buf).expect("Locale fits in max length");
-    TinyAsciiStr::<MAX_LOCALE_LEN>::try_from_str(&buf)
-        .expect("Locale still fits in max length and is ASCII")
+    loc.write_to(&mut buf).ok()?;
+    TinyAsciiStr::<MAX_LOCALE_LEN>::try_from_str(&buf).ok()
 }
 
 /// List the supported locales by merging locales enumerated by ICU4X and
@@ -539,12 +582,14 @@ fn list_locales() -> LocaleList {
             TinyLocaleStr::try_from_str(loc).expect("additional list should have valid locales"),
         );
     }
-    for (loc, _) in icu_collator::provider::list_locales() {
+    for (loc, _) in data_locales() {
         // Root and Chinese modeled as `und` and filled in above instead.
         if loc.language == language!("und") {
             continue;
         }
-        let _ = locales.insert(data_locale_to_tiny(loc));
+        if let Some(tiny) = data_locale_to_tiny(loc) {
+            let _ = locales.insert(tiny);
+        }
     }
     LocaleList {
         vec: locales.iter().copied().collect(),

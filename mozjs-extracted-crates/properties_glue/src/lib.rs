@@ -5,7 +5,25 @@
 use core::ffi::c_char;
 use core::ffi::c_void;
 use core::ffi::CStr;
+use std::sync::OnceLock;
+
 use icu_collections::codepointinvlist::CodePointInversionListBuilder;
+
+/// The case mapper, built once from the ICU4X data blob.
+///
+/// Building it per call would deserialize the data every time. The borrowed
+/// view taken from it is a struct of references, so taking one per call is
+/// inexpensive.
+static CASE_MAPPER: OnceLock<icu_casemap::CaseMapper> = OnceLock::new();
+
+fn case_mapper() -> icu_casemap::CaseMapperBorrowed<'static> {
+    CASE_MAPPER
+        .get_or_init(|| {
+            icu_casemap::CaseMapper::try_new_with_buffer_provider(icu_provider_glue::provider())
+                .expect("the ICU4X data blob has no case mapping data")
+        })
+        .as_borrowed()
+}
 
 extern "C" {
     fn js_irregexp_add_range_to_zone_list(
@@ -33,12 +51,16 @@ pub unsafe extern "C" fn mozilla_properties_glue_add_property_ranges(
             return false;
         }
     }
-    let Some(prop) = icu_properties::CodePointSetData::new_for_ecma262(name) else {
+    let Some(Ok(prop)) = icu_properties::CodePointSetData::try_new_for_ecma262_with_buffer_provider(
+        icu_provider_glue::provider(),
+        name,
+    ) else {
         return false;
     };
+    let prop = prop.as_borrowed();
     if needs_case_folding {
         let mut builder = CodePointInversionListBuilder::new();
-        let mapper = icu_casemap::CaseMapperBorrowed::new();
+        let mapper = case_mapper();
         for range in prop.iter_ranges() {
             builder.add_range32(range.clone());
             for u in range {

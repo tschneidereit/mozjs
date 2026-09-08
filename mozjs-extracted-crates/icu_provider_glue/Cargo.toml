@@ -1,0 +1,18 @@
+[package]
+license = "MPL-2.0"
+description = "shared ICU4X blob data provider for mozjs-sys"
+repository = "https://github.com/servo/mozjs"
+name = "mozjs_icu_provider_glue"
+version = "153.0.0"
+edition = "2021"
+rust-version.workspace = true
+
+[dependencies]
+# `alloc` provides the id enumeration collator_glue uses to list the locales in
+# the blob. It makes the cart an Rc, which `sync` below turns into an Arc.
+# Pinned to what icu_capi 2.1.2 requires.
+icu_provider_blob = { version = "~2.1.1", features = ["alloc"] }
+# `sync` makes the blob provider's cart an `Arc` rather than an `Rc`, which is
+# what lets the provider live in a `static`. SpiderMonkey creates runtimes on
+# more than one thread.
+icu_provider = { version = "2", features = ["sync"] }

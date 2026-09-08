@@ -34,7 +34,8 @@ mod jsimpls;
 
 // Modules with public definitions
 pub mod glue;
-#[cfg(feature = "intl")]
+// Not gated on `intl`: the ICU4X blob backs `String.prototype.normalize`, which
+// exists without the Intl API.
 pub mod icu;
 pub mod jsgc;
 pub mod jsid;

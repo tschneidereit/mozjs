@@ -9,7 +9,9 @@ edition = "2021"
 rust-version.workspace = true
 
 [dependencies]
-icu_collator = { package = "mozjs_icu_collator", version = "=153.0.0", path = "../icu_collator", features = ["latin1", "compiled_data", "unstable"] }
+icu_collator = { package = "mozjs_icu_collator", version = "=153.0.0", path = "../icu_collator", default-features = false, features = ["latin1", "serde", "unstable"] }
+icu_provider = { version = "2.3", features = ["sync"] }
+icu_provider_glue = { package = "mozjs_icu_provider_glue", version = "=153.0.0", path = "../icu_provider_glue" }
 icu_locale_core = "2.1.1"
 tinystr = { version = "0.8.0", default-features = false }
 arraystring = "0.3.0"

@@ -183,13 +183,81 @@ fn maybe_reserve_buffer_space(
     }
 }
 
+/// The normalizers, each built once from the ICU4X data blob.
+///
+/// Building one deserializes from the blob, so they are cached. The borrowed
+/// view taken from each is a struct of references, so taking one per call is
+/// free.
+mod cached {
+    use std::sync::OnceLock;
+
+    use icu_normalizer::properties::{
+        CanonicalCombiningClassMap, CanonicalCombiningClassMapBorrowed, CanonicalComposition,
+        CanonicalCompositionBorrowed,
+    };
+    use icu_normalizer::{
+        ComposingNormalizer, ComposingNormalizerBorrowed, DecomposingNormalizer,
+        DecomposingNormalizerBorrowed,
+    };
+
+    macro_rules! cached {
+        ($name:ident, $owned:ty, $borrowed:ty, $ctor:ident) => {
+            pub fn $name() -> $borrowed {
+                static CELL: OnceLock<$owned> = OnceLock::new();
+                CELL.get_or_init(|| {
+                    <$owned>::$ctor(icu_provider_glue::provider())
+                        .expect("the ICU4X data blob has no normalization data")
+                })
+                .as_borrowed()
+            }
+        };
+    }
+
+    cached!(
+        nfc,
+        ComposingNormalizer,
+        ComposingNormalizerBorrowed<'static>,
+        try_new_nfc_with_buffer_provider
+    );
+    cached!(
+        nfkc,
+        ComposingNormalizer,
+        ComposingNormalizerBorrowed<'static>,
+        try_new_nfkc_with_buffer_provider
+    );
+    cached!(
+        nfd,
+        DecomposingNormalizer,
+        DecomposingNormalizerBorrowed<'static>,
+        try_new_nfd_with_buffer_provider
+    );
+    cached!(
+        nfkd,
+        DecomposingNormalizer,
+        DecomposingNormalizerBorrowed<'static>,
+        try_new_nfkd_with_buffer_provider
+    );
+    cached!(
+        canonical_composition,
+        CanonicalComposition,
+        CanonicalCompositionBorrowed<'static>,
+        try_new_with_buffer_provider
+    );
+    cached!(
+        combining_class_map,
+        CanonicalCombiningClassMap,
+        CanonicalCombiningClassMapBorrowed<'static>,
+        try_new_with_buffer_provider
+    );
+}
+
 fn normalize_utf16(form: NormalizationForm, input: &[u16], buffer: &mut Buffer) -> bool {
     match form {
         NormalizationForm::NFC | NormalizationForm::NFKC => {
             let normalizer = if form == NormalizationForm::NFC {
-                icu_normalizer::ComposingNormalizerBorrowed::new_nfc()
+                cached::nfc()
             } else {
-                icu_normalizer::ComposingNormalizerBorrowed::new_nfkc()
+                cached::nfkc()
             };
             let (head, tail) = normalizer.split_normalized_utf16(input);
             if tail.is_empty() {
@@ -208,9 +276,9 @@ fn normalize_utf16(form: NormalizationForm, input: &[u16], buffer: &mut Buffer) 
         }
         NormalizationForm::NFD | NormalizationForm::NFKD => {
             let normalizer = if form == NormalizationForm::NFD {
-                icu_normalizer::DecomposingNormalizer::new_nfd()
+                cached::nfd()
             } else {
-                icu_normalizer::DecomposingNormalizer::new_nfkd()
+                cached::nfkd()
             };
             let (head, tail) = normalizer.split_normalized_utf16(input);
             if tail.is_empty() {
@@ -293,7 +361,7 @@ fn normalize_latin1(form: NormalizationForm, input: &[u8], buffer: &mut Buffer) 
 
 #[no_mangle]
 pub unsafe extern "C" fn mozilla_canonical_composition(a: u32, b: u32) -> u32 {
-    icu_normalizer::properties::CanonicalCompositionBorrowed::new()
+    cached::canonical_composition()
         .compose(
             char::from_u32(a).unwrap_or('\u{0}'),
             char::from_u32(b).unwrap_or('\u{0}'),
@@ -304,5 +372,5 @@ pub unsafe extern "C" fn mozilla_canonical_composition(a: u32, b: u32) -> u32 {
 
 #[no_mangle]
 pub unsafe extern "C" fn mozilla_canonical_combining_class(c: u32) -> u8 {
-    icu_normalizer::properties::CanonicalCombiningClassMapBorrowed::new().get32_u8(c)
+    cached::combining_class_map().get32_u8(c)
 }

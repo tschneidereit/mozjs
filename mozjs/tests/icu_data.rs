@@ -89,6 +89,17 @@ fn minimized_icu_data_serves_intl_temporal_and_regexp() {
         // ICU4X segmenter, grapheme granularity.
         "[...new Intl.Segmenter('en', {granularity: 'grapheme'})\
          .segment('a\\u{1F600}b')].length",
+        // String.prototype.normalize, which works without the Intl API and so
+        // exercises the ICU4X normalizer independently of everything above.
+        // NFC composes; NFD decomposes; NFKC folds compatibility forms.
+        "'a\\u0301'.normalize('NFC') === '\\u00e1'",
+        "'\\u00e1'.normalize('NFD').length === 2",
+        "'\\ufb01'.normalize('NFKC') === 'fi'",
+        // The LSTM segmenter, on Thai, which has no spaces between words.
+        "[...new Intl.Segmenter('th', {granularity: 'word'})\
+         .segment('\\u0e20\\u0e32\\u0e29\\u0e32\\u0e44\\u0e17\\u0e22')].length > 1",
+        // A non-ISO Temporal calendar, which comes from ICU4X calendar data.
+        "new Temporal.PlainDate(2026, 2, 17).withCalendar('chinese').monthCode",
         // Currency and display-name resources.
         "new Intl.NumberFormat('de', {style: 'currency', currency: 'EUR'}).format(1)",
         "new Intl.DisplayNames(['de'], {type: 'region'}).of('FR')",
@@ -111,6 +122,17 @@ fn minimized_icu_data_serves_intl_temporal_and_regexp() {
     assert_eq!(results[8], "true", "Han script property escape");
     assert_eq!(results[9], "-1", "de collation");
     assert_eq!(results[10], "3", "grapheme segmentation");
-    assert_eq!(results[11], "1,00\u{a0}€", "de currency formatting");
-    assert_eq!(results[12], "Frankreich", "de region display name");
+    assert_eq!(results[11], "true", "NFC composition");
+    assert_eq!(results[12], "true", "NFD decomposition");
+    assert_eq!(results[13], "true", "NFKC compatibility folding");
+    assert_eq!(
+        results[14], "true",
+        "Thai word segmentation via the LSTM model"
+    );
+    assert_eq!(
+        results[15], "M01",
+        "the Chinese calendar resolves a month code"
+    );
+    assert_eq!(results[16], "1,00\u{a0}€", "de currency formatting");
+    assert_eq!(results[17], "Frankreich", "de region display name");
 }

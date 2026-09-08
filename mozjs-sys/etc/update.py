@@ -11,6 +11,7 @@ from pathlib import Path
 import re
 
 TARGET = "mozjs-sys/mozjs"
+EXTRACTED_CRATES_TARGET = "mozjs-extracted-crates"
 
 
 def extract_tarball(tarball, commit):
@@ -277,7 +278,15 @@ impl icu_casemap::ClosureSink for CodePointInversionListBuilder {
 
 def apply_patches():
     print("Applying patches.")
-    patch_dir = os.path.abspath(os.path.join("mozjs-sys", "etc", "patches"))
+    # `patches` applies to the vendored SpiderMonkey tree, `patches-crates`
+    # to the crates copied out of it, which `extract_tarball` deletes and
+    # regenerates on every update.
+    apply_patches_from("patches", TARGET)
+    apply_patches_from("patches-crates", EXTRACTED_CRATES_TARGET)
+
+
+def apply_patches_from(subdirectory, target):
+    patch_dir = os.path.abspath(os.path.join("mozjs-sys", "etc", subdirectory))
     patches = sorted(
         os.path.join(patch_dir, p)
         for p in os.listdir(patch_dir)
@@ -286,7 +295,7 @@ def apply_patches():
     for p in patches:
         print("  Applying patch: %s." % p)
         subprocess.check_call(
-            ["git", "apply", "--reject", "--directory=" + TARGET, p],
+            ["git", "apply", "--reject", "--directory=" + target, p],
             stdout=subprocess.DEVNULL,
         )
 

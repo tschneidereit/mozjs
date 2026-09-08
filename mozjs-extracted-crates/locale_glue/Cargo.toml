@@ -9,7 +9,8 @@ edition = "2021"
 rust-version.workspace = true
 
 [dependencies]
-icu_locale = { version = "2.1.1", features = ["compiled_data"] }
+icu_locale = { version = "2.1.1", default-features = false, features = ["serde"] }
+icu_provider_glue = { package = "mozjs_icu_provider_glue", version = "=153.0.0", path = "../icu_provider_glue" }
 
 [build-dependencies.cbindgen]
 version = "0.29.4"

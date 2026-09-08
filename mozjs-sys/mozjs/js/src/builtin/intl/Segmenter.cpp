@@ -20,6 +20,8 @@
 #include "builtin/intl/StringAsciiChars.h"
 #include "gc/AllocKind.h"
 #include "gc/GCContext.h"
+#include "mozilla/intl/ICU4XProvider.h"
+
 #include "icu4x/GraphemeClusterSegmenter.hpp"
 #include "icu4x/Locale.hpp"
 #include "icu4x/SentenceSegmenter.hpp"
@@ -396,7 +398,7 @@ struct GraphemeClusterSegmenter {
       SegmenterBreakIteratorType<GraphemeClusterSegmenterBreakIteratorTwoByte>;
 
   static constexpr auto& create =
-      icu4x::capi::icu4x_GraphemeClusterSegmenter_create_mv1;
+      mozilla::intl::icu4x_provider::icu4x_GraphemeClusterSegmenter_create_mv1;
   static constexpr auto& destroy =
       icu4x::capi::icu4x_GraphemeClusterSegmenter_destroy_mv1;
 };
@@ -441,7 +443,8 @@ struct WordSegmenter {
       SegmenterBreakIteratorType<WordSegmenterBreakIteratorTwoByte>;
 
   static constexpr auto& create =
-      icu4x::capi::icu4x_WordSegmenter_create_auto_with_content_locale_mv1;
+      mozilla::intl::icu4x_provider::
+          icu4x_WordSegmenter_create_auto_with_content_locale_mv1;
   static constexpr auto& destroy = icu4x::capi::icu4x_WordSegmenter_destroy_mv1;
 };
 
@@ -485,7 +488,8 @@ struct SentenceSegmenter {
       SegmenterBreakIteratorType<SentenceSegmenterBreakIteratorTwoByte>;
 
   static constexpr auto& create =
-      icu4x::capi::icu4x_SentenceSegmenter_create_with_content_locale_mv1;
+      mozilla::intl::icu4x_provider::
+          icu4x_SentenceSegmenter_create_with_content_locale_mv1;
   static constexpr auto& destroy =
       icu4x::capi::icu4x_SentenceSegmenter_destroy_mv1;
 };

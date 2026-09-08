@@ -1,0 +1,614 @@
+From: Till Schneidereit <till@tillschneidereit.net>
+Subject: [PATCH] Build the ICU4X glue crates against a runtime data provider
+
+The extracted glue crates call the ICU4X constructors that take the compiled-in
+data provider, which links the full ICU4X data set into every binary. Give each
+of them an entry point taking the provider that icu_provider_glue builds from a
+postcard blob, and add icu_provider_glue itself, which holds that provider.
+---
+diff --git a/collator_glue/Cargo.toml b/collator_glue/Cargo.toml
+index 19e4eeddb..5fa5cf045 100644
+--- a/collator_glue/Cargo.toml
++++ b/collator_glue/Cargo.toml
+@@ -9,7 +9,9 @@ edition = "2021"
+ rust-version.workspace = true
+ 
+ [dependencies]
+-icu_collator = { package = "mozjs_icu_collator", version = "=153.0.0", path = "../icu_collator", features = ["latin1", "compiled_data", "unstable"] }
++icu_collator = { package = "mozjs_icu_collator", version = "=153.0.0", path = "../icu_collator", default-features = false, features = ["latin1", "serde", "unstable"] }
++icu_provider = { version = "2.3", features = ["sync"] }
++icu_provider_glue = { package = "mozjs_icu_provider_glue", version = "=153.0.0", path = "../icu_provider_glue" }
+ icu_locale_core = "2.1.1"
+ tinystr = { version = "0.8.0", default-features = false }
+ arraystring = "0.3.0"
+diff --git a/collator_glue/src/lib.rs b/collator_glue/src/lib.rs
+index 2e9d64a52..eab2ca2fb 100644
+--- a/collator_glue/src/lib.rs
++++ b/collator_glue/src/lib.rs
+@@ -13,7 +13,7 @@ use icu_collator::options::CaseLevel;
+ use icu_collator::options::Strength;
+ use icu_collator::preferences::CollationCaseFirst;
+ use icu_collator::preferences::CollationNumericOrdering;
+-use icu_collator::CollatorBorrowed;
++use icu_collator::Collator;
+ use icu_collator::CollatorPreferences;
+ use icu_locale_core::subtags::language;
+ use icu_locale_core::subtags::script;
+@@ -237,7 +237,7 @@ pub unsafe extern "C" fn mozilla_collator_glue_collator_try_new(
+     locale: *const c_char,
+     locale_len: usize,
+     options: crate::CollatorOptions,
+-) -> *mut CollatorBorrowed<'static> {
++) -> *mut Collator {
+     if locale_len == 0 {
+         return core::ptr::null_mut();
+     }
+@@ -291,26 +291,32 @@ pub unsafe extern "C" fn mozilla_collator_glue_collator_try_new(
+     // `unwrap` is OK below, because `CollatorBorrowed::try_new`` never
+     // fails with properly-generated baked data.
+     // See https://github.com/unicode-org/icu4x/issues/6634
++    // `unwrap` is OK below: the blob is generated with the collation data this
++    // asks for, so a failure here means a mismatched blob, not a runtime
++    // condition.
+     Box::into_raw(Box::new(
+-        CollatorBorrowed::try_new(prefs, collator_options).unwrap(),
++        Collator::try_new_with_buffer_provider(
++            icu_provider_glue::provider(),
++            prefs,
++            collator_options,
++        )
++        .unwrap(),
+     ))
+ }
+ 
+ /// Deleter for values previously obtained from
+ /// `mozilla_collator_glue_collator_try_new`.
+ #[no_mangle]
+-pub unsafe extern "C" fn mozilla_collator_glue_collator_free(
+-    collator: *mut CollatorBorrowed<'static>,
+-) {
++pub unsafe extern "C" fn mozilla_collator_glue_collator_free(collator: *mut Collator) {
+     let _ = Box::from_raw(collator);
+ }
+ 
+ /// Returns the resolved options of the collator.
+ #[no_mangle]
+ pub unsafe extern "C" fn mozilla_collator_glue_collator_resolved_options(
+-    collator: *const CollatorBorrowed<'static>,
++    collator: *const Collator,
+ ) -> CollatorOptions {
+-    let resolved = (*collator).resolved_options();
++    let resolved = (*collator).as_borrowed().resolved_options();
+ 
+     CollatorOptions {
+         sensitivity: match resolved.strength {
+@@ -358,13 +364,13 @@ pub unsafe extern "C" fn mozilla_collator_glue_collator_resolved_options(
+ /// be changed on the mozilla::Span side eventually.
+ #[no_mangle]
+ pub unsafe extern "C" fn mozilla_collator_glue_collator_compare_utf16(
+-    collator: *const CollatorBorrowed<'static>,
++    collator: *const Collator,
+     left: *const u16,
+     left_len: usize,
+     right: *const u16,
+     right_len: usize,
+ ) -> i32 {
+-    (*collator).compare_utf16(
++    (*collator).as_borrowed().compare_utf16(
+         core::slice::from_raw_parts(left, left_len),
+         core::slice::from_raw_parts(right, right_len),
+     ) as i32
+@@ -379,13 +385,13 @@ pub unsafe extern "C" fn mozilla_collator_glue_collator_compare_utf16(
+ /// be changed on the mozilla::Span side eventually.
+ #[no_mangle]
+ pub unsafe extern "C" fn mozilla_collator_glue_collator_compare_latin1(
+-    collator: *const CollatorBorrowed<'static>,
++    collator: *const Collator,
+     left: *const u8,
+     left_len: usize,
+     right: *const u8,
+     right_len: usize,
+ ) -> i32 {
+-    (*collator).compare_latin1(
++    (*collator).as_borrowed().compare_latin1(
+         core::slice::from_raw_parts(left, left_len),
+         core::slice::from_raw_parts(right, right_len),
+     ) as i32
+@@ -400,13 +406,13 @@ pub unsafe extern "C" fn mozilla_collator_glue_collator_compare_latin1(
+ /// be changed on the mozilla::Span side eventually.
+ #[no_mangle]
+ pub unsafe extern "C" fn mozilla_collator_glue_collator_compare_latin1_utf16(
+-    collator: *const CollatorBorrowed<'static>,
++    collator: *const Collator,
+     left: *const u8,
+     left_len: usize,
+     right: *const u16,
+     right_len: usize,
+ ) -> i32 {
+-    (*collator).compare_latin1_utf16(
++    (*collator).as_borrowed().compare_latin1_utf16(
+         core::slice::from_raw_parts(left, left_len),
+         core::slice::from_raw_parts(right, right_len),
+     ) as i32
+@@ -429,6 +435,40 @@ pub unsafe extern "C" fn mozilla_collator_glue_is_supported_collation(
+     )
+ }
+ 
++/// The locale and collation pairs the data blob holds.
++///
++/// Replaces `icu_collator::provider::list_locales`, which reads the baked data
++/// directly and so exists only under `compiled_data`. The iterator may yield
++/// duplicates, which the caller already collects into a set.
++fn data_locales() -> impl Iterator<Item = (DataLocale, TinyAsciiStr<8>)> {
++    use icu_collator::provider::{
++        CollationDiacriticsV1, CollationMetadataV1, CollationReorderingV1, CollationTailoringV1,
++    };
++    use icu_provider::buf::BufferMarker;
++    use icu_provider::prelude::*;
++    use icu_provider::IterableDynamicDataProvider;
++
++    let provider = icu_provider_glue::provider();
++    [
++        CollationMetadataV1::INFO,
++        CollationTailoringV1::INFO,
++        CollationReorderingV1::INFO,
++        CollationDiacriticsV1::INFO,
++    ]
++    .into_iter()
++    .flat_map(move |marker| {
++        IterableDynamicDataProvider::<BufferMarker>::iter_ids_for_marker(provider, marker)
++            .expect("the ICU4X data blob has no collation data")
++    })
++    .map(|id| {
++        (
++            id.locale.clone(),
++            TinyAsciiStr::<8>::try_from_str(id.marker_attributes.as_str())
++                .expect("Marker attribute invariants upheld"),
++        )
++    })
++}
++
+ fn get_lang_coll_combinations() -> &'static [LangColl] {
+     LANG_COLL_COMBINATIONS.get_or_init(|| {
+         let mut set: HashSet<LangColl> = HashSet::new();
+@@ -436,7 +476,7 @@ fn get_lang_coll_combinations() -> &'static [LangColl] {
+         let mut eor_seen = false;
+         #[cfg(debug_assertions)]
+         let mut emoji_seen = false;
+-        for (loc, collation) in icu_collator::provider::list_locales() {
++        for (loc, collation) in data_locales() {
+             if collation.is_empty() || collation.as_str() == "search" {
+                 continue;
+             }
+@@ -522,11 +562,14 @@ pub struct LocaleList {
+ }
+ 
+ /// Converts from ICU4X `DataLocale` to `TinyLocaleStr`.
+-fn data_locale_to_tiny(loc: DataLocale) -> TinyLocaleStr {
++///
++/// Returns `None` for a locale too long to represent, which ECMA-402 could not
++/// report anyway. The data holds one: `en-US-posix`, at 11 characters. The
++/// ICU4C package drops it too, through the `locales_tree` filter.
++fn data_locale_to_tiny(loc: DataLocale) -> Option<TinyLocaleStr> {
+     let mut buf: ArrayLocale = ArrayLocale::new();
+-    loc.write_to(&mut buf).expect("Locale fits in max length");
+-    TinyAsciiStr::<MAX_LOCALE_LEN>::try_from_str(&buf)
+-        .expect("Locale still fits in max length and is ASCII")
++    loc.write_to(&mut buf).ok()?;
++    TinyAsciiStr::<MAX_LOCALE_LEN>::try_from_str(&buf).ok()
+ }
+ 
+ /// List the supported locales by merging locales enumerated by ICU4X and
+@@ -539,12 +582,14 @@ fn list_locales() -> LocaleList {
+             TinyLocaleStr::try_from_str(loc).expect("additional list should have valid locales"),
+         );
+     }
+-    for (loc, _) in icu_collator::provider::list_locales() {
++    for (loc, _) in data_locales() {
+         // Root and Chinese modeled as `und` and filled in above instead.
+         if loc.language == language!("und") {
+             continue;
+         }
+-        let _ = locales.insert(data_locale_to_tiny(loc));
++        if let Some(tiny) = data_locale_to_tiny(loc) {
++            let _ = locales.insert(tiny);
++        }
+     }
+     LocaleList {
+         vec: locales.iter().copied().collect(),
+diff --git a/icu_provider_glue/Cargo.toml b/icu_provider_glue/Cargo.toml
+new file mode 100644
+index 000000000..ef93cc34e
+--- /dev/null
++++ b/icu_provider_glue/Cargo.toml
+@@ -0,0 +1,18 @@
++[package]
++license = "MPL-2.0"
++description = "shared ICU4X blob data provider for mozjs-sys"
++repository = "https://github.com/servo/mozjs"
++name = "mozjs_icu_provider_glue"
++version = "153.0.0"
++edition = "2021"
++rust-version.workspace = true
++
++[dependencies]
++# `alloc` provides the id enumeration collator_glue uses to list the locales in
++# the blob. It makes the cart an Rc, which `sync` below turns into an Arc.
++# Pinned to what icu_capi 2.1.2 requires.
++icu_provider_blob = { version = "~2.1.1", features = ["alloc"] }
++# `sync` makes the blob provider's cart an `Arc` rather than an `Rc`, which is
++# what lets the provider live in a `static`. SpiderMonkey creates runtimes on
++# more than one thread.
++icu_provider = { version = "2", features = ["sync"] }
+diff --git a/icu_provider_glue/src/lib.rs b/icu_provider_glue/src/lib.rs
+new file mode 100644
+index 000000000..ab7dded05
+--- /dev/null
++++ b/icu_provider_glue/src/lib.rs
+@@ -0,0 +1,32 @@
++//! The ICU4X data blob, shared by the glue crates.
++//!
++//! Each glue crate builds its ICU4X objects from one process-wide
++//! [`BlobDataProvider`]. `mozjs_sys::icu` installs the blob before the engine
++//! starts, so by the time any of them runs the provider is set.
++
++use std::sync::OnceLock;
++
++use icu_provider_blob::BlobDataProvider;
++
++static PROVIDER: OnceLock<BlobDataProvider> = OnceLock::new();
++
++/// Installs the ICU4X data blob.
++///
++/// The bytes are borrowed rather than copied, which is why the lifetime is
++/// `'static`. Returns `Err` if the blob is not a postcard data blob, and
++/// `Ok(false)` if one was already installed, in which case this one is
++/// ignored.
++pub fn set_blob(blob: &'static [u8]) -> Result<bool, icu_provider::DataError> {
++    let provider = BlobDataProvider::try_new_from_static_blob(blob)?;
++    Ok(PROVIDER.set(provider).is_ok())
++}
++
++/// The installed ICU4X data provider.
++///
++/// Panics if no blob was installed. That cannot happen through
++/// `JSEngine::init`, which installs the data or fails before the engine runs.
++pub fn provider() -> &'static BlobDataProvider {
++    PROVIDER
++        .get()
++        .expect("no ICU4X data: mozjs_sys::icu::install must run before the engine is used")
++}
+diff --git a/locale_glue/Cargo.toml b/locale_glue/Cargo.toml
+index bf9722b3c..cf78aea74 100644
+--- a/locale_glue/Cargo.toml
++++ b/locale_glue/Cargo.toml
+@@ -9,7 +9,8 @@ edition = "2021"
+ rust-version.workspace = true
+ 
+ [dependencies]
+-icu_locale = { version = "2.1.1", features = ["compiled_data"] }
++icu_locale = { version = "2.1.1", default-features = false, features = ["serde"] }
++icu_provider_glue = { package = "mozjs_icu_provider_glue", version = "=153.0.0", path = "../icu_provider_glue" }
+ 
+ [build-dependencies.cbindgen]
+ version = "0.29.4"
+diff --git a/locale_glue/src/lib.rs b/locale_glue/src/lib.rs
+index 9a0a192a6..3146040d1 100644
+--- a/locale_glue/src/lib.rs
++++ b/locale_glue/src/lib.rs
+@@ -6,9 +6,30 @@ use std::ffi::c_char;
+ 
+ use icu_locale::Direction;
+ use icu_locale::LanguageIdentifier;
++use std::sync::OnceLock;
++
+ use icu_locale::LocaleDirectionality;
+ use icu_locale::LocaleExpander;
+ 
++/// The locale expander and directionality, each built once from the ICU4X data
++/// blob. Building one deserializes from the blob, and this is called per
++/// request.
++fn expander() -> &'static LocaleExpander {
++    static CELL: OnceLock<LocaleExpander> = OnceLock::new();
++    CELL.get_or_init(|| {
++        LocaleExpander::try_new_extended_with_buffer_provider(icu_provider_glue::provider())
++            .expect("the ICU4X data blob has no likely-subtags data")
++    })
++}
++
++fn directionality() -> &'static LocaleDirectionality {
++    static CELL: OnceLock<LocaleDirectionality> = OnceLock::new();
++    CELL.get_or_init(|| {
++        LocaleDirectionality::try_new_extended_with_buffer_provider(icu_provider_glue::provider())
++            .expect("the ICU4X data blob has no script direction data")
++    })
++}
++
+ /// Text direction.
+ #[repr(u8)]
+ #[derive(Clone, Copy)]
+@@ -44,22 +65,18 @@ pub unsafe extern "C" fn locale_text_direction_of(
+         return TextDirection::Unknown;
+     };
+ 
+-    let expander = LocaleExpander::new_extended();
+-
+     // Manually maximize to handle inputs like "und" or "und-US".
+     //
+     // https://github.com/unicode-org/icu4x/issues/7866
+     if lang_id.script.is_none() {
+-        expander.maximize(&mut lang_id);
++        expander().maximize(&mut lang_id);
+ 
+         if lang_id.script.is_none() {
+             return TextDirection::Unknown;
+         }
+     }
+ 
+-    let ld = LocaleDirectionality::new_with_expander(expander);
+-
+-    return match ld.get(&lang_id) {
++    return match directionality().get(&lang_id) {
+         Some(Direction::LeftToRight) => TextDirection::LeftToRight,
+         Some(Direction::RightToLeft) => TextDirection::RightToLeft,
+         Some(_) => TextDirection::Unknown,
+diff --git a/normalizer_glue/Cargo.toml b/normalizer_glue/Cargo.toml
+index b1787e569..61db852c3 100644
+--- a/normalizer_glue/Cargo.toml
++++ b/normalizer_glue/Cargo.toml
+@@ -8,7 +8,8 @@ edition = "2021"
+ license = "MPL-2.0"
+ 
+ [dependencies]
+-icu_normalizer = { package = "mozjs_icu_normalizer", version = "=153.0.0", path = "../icu_normalizer", features = ["compiled_data", "utf16_iter", "latin1"] }
++icu_normalizer = { package = "mozjs_icu_normalizer", version = "=153.0.0", path = "../icu_normalizer", default-features = false, features = ["serde", "utf16_iter", "latin1"] }
++icu_provider_glue = { package = "mozjs_icu_provider_glue", version = "=153.0.0", path = "../icu_provider_glue" }
+ write16 = { version  = "1.0", features = ["smallvec"] }
+ smallvec = "1.9.0"
+ encoding_rs = "0.8"
+diff --git a/normalizer_glue/src/lib.rs b/normalizer_glue/src/lib.rs
+index dac445213..ee88f3b54 100644
+--- a/normalizer_glue/src/lib.rs
++++ b/normalizer_glue/src/lib.rs
+@@ -183,13 +183,81 @@ fn maybe_reserve_buffer_space(
+     }
+ }
+ 
++/// The normalizers, each built once from the ICU4X data blob.
++///
++/// Building one deserializes from the blob, so they are cached. The borrowed
++/// view taken from each is a struct of references, so taking one per call is
++/// free.
++mod cached {
++    use std::sync::OnceLock;
++
++    use icu_normalizer::properties::{
++        CanonicalCombiningClassMap, CanonicalCombiningClassMapBorrowed, CanonicalComposition,
++        CanonicalCompositionBorrowed,
++    };
++    use icu_normalizer::{
++        ComposingNormalizer, ComposingNormalizerBorrowed, DecomposingNormalizer,
++        DecomposingNormalizerBorrowed,
++    };
++
++    macro_rules! cached {
++        ($name:ident, $owned:ty, $borrowed:ty, $ctor:ident) => {
++            pub fn $name() -> $borrowed {
++                static CELL: OnceLock<$owned> = OnceLock::new();
++                CELL.get_or_init(|| {
++                    <$owned>::$ctor(icu_provider_glue::provider())
++                        .expect("the ICU4X data blob has no normalization data")
++                })
++                .as_borrowed()
++            }
++        };
++    }
++
++    cached!(
++        nfc,
++        ComposingNormalizer,
++        ComposingNormalizerBorrowed<'static>,
++        try_new_nfc_with_buffer_provider
++    );
++    cached!(
++        nfkc,
++        ComposingNormalizer,
++        ComposingNormalizerBorrowed<'static>,
++        try_new_nfkc_with_buffer_provider
++    );
++    cached!(
++        nfd,
++        DecomposingNormalizer,
++        DecomposingNormalizerBorrowed<'static>,
++        try_new_nfd_with_buffer_provider
++    );
++    cached!(
++        nfkd,
++        DecomposingNormalizer,
++        DecomposingNormalizerBorrowed<'static>,
++        try_new_nfkd_with_buffer_provider
++    );
++    cached!(
++        canonical_composition,
++        CanonicalComposition,
++        CanonicalCompositionBorrowed<'static>,
++        try_new_with_buffer_provider
++    );
++    cached!(
++        combining_class_map,
++        CanonicalCombiningClassMap,
++        CanonicalCombiningClassMapBorrowed<'static>,
++        try_new_with_buffer_provider
++    );
++}
++
+ fn normalize_utf16(form: NormalizationForm, input: &[u16], buffer: &mut Buffer) -> bool {
+     match form {
+         NormalizationForm::NFC | NormalizationForm::NFKC => {
+             let normalizer = if form == NormalizationForm::NFC {
+-                icu_normalizer::ComposingNormalizerBorrowed::new_nfc()
++                cached::nfc()
+             } else {
+-                icu_normalizer::ComposingNormalizerBorrowed::new_nfkc()
++                cached::nfkc()
+             };
+             let (head, tail) = normalizer.split_normalized_utf16(input);
+             if tail.is_empty() {
+@@ -208,9 +276,9 @@ fn normalize_utf16(form: NormalizationForm, input: &[u16], buffer: &mut Buffer)
+         }
+         NormalizationForm::NFD | NormalizationForm::NFKD => {
+             let normalizer = if form == NormalizationForm::NFD {
+-                icu_normalizer::DecomposingNormalizer::new_nfd()
++                cached::nfd()
+             } else {
+-                icu_normalizer::DecomposingNormalizer::new_nfkd()
++                cached::nfkd()
+             };
+             let (head, tail) = normalizer.split_normalized_utf16(input);
+             if tail.is_empty() {
+@@ -293,7 +361,7 @@ fn normalize_latin1(form: NormalizationForm, input: &[u8], buffer: &mut Buffer)
+ 
+ #[no_mangle]
+ pub unsafe extern "C" fn mozilla_canonical_composition(a: u32, b: u32) -> u32 {
+-    icu_normalizer::properties::CanonicalCompositionBorrowed::new()
++    cached::canonical_composition()
+         .compose(
+             char::from_u32(a).unwrap_or('\u{0}'),
+             char::from_u32(b).unwrap_or('\u{0}'),
+@@ -304,5 +372,5 @@ pub unsafe extern "C" fn mozilla_canonical_composition(a: u32, b: u32) -> u32 {
+ 
+ #[no_mangle]
+ pub unsafe extern "C" fn mozilla_canonical_combining_class(c: u32) -> u8 {
+-    icu_normalizer::properties::CanonicalCombiningClassMapBorrowed::new().get32_u8(c)
++    cached::combining_class_map().get32_u8(c)
+ }
+diff --git a/properties_glue/Cargo.toml b/properties_glue/Cargo.toml
+index 10a95176e..79fd80d35 100644
+--- a/properties_glue/Cargo.toml
++++ b/properties_glue/Cargo.toml
+@@ -9,9 +9,10 @@ edition = "2021"
+ rust-version.workspace = true
+ 
+ [dependencies]
+-icu_properties = "2.1.2"
++icu_properties = { version = "2.1.2", default-features = false, features = ["alloc", "serde"] }
+ icu_collections = { features = ["alloc"], package = "mozjs_icu_collections", version = "=153.0.0", path = "../icu_collections" }
+-icu_casemap = "2"
++icu_casemap = { version = "2", default-features = false, features = ["serde"] }
++icu_provider_glue = { package = "mozjs_icu_provider_glue", version = "=153.0.0", path = "../icu_provider_glue" }
+ 
+ [build-dependencies.cbindgen]
+ version = "0.29.4"
+diff --git a/properties_glue/src/lib.rs b/properties_glue/src/lib.rs
+index 7fcbb68ff..74c168ffa 100644
+--- a/properties_glue/src/lib.rs
++++ b/properties_glue/src/lib.rs
+@@ -5,8 +5,26 @@
+ use core::ffi::c_char;
+ use core::ffi::c_void;
+ use core::ffi::CStr;
++use std::sync::OnceLock;
++
+ use icu_collections::codepointinvlist::CodePointInversionListBuilder;
+ 
++/// The case mapper, built once from the ICU4X data blob.
++///
++/// Building it per call would deserialize the data every time. The borrowed
++/// view taken from it is a struct of references, so taking one per call is
++/// inexpensive.
++static CASE_MAPPER: OnceLock<icu_casemap::CaseMapper> = OnceLock::new();
++
++fn case_mapper() -> icu_casemap::CaseMapperBorrowed<'static> {
++    CASE_MAPPER
++        .get_or_init(|| {
++            icu_casemap::CaseMapper::try_new_with_buffer_provider(icu_provider_glue::provider())
++                .expect("the ICU4X data blob has no case mapping data")
++        })
++        .as_borrowed()
++}
++
+ extern "C" {
+     fn js_irregexp_add_range_to_zone_list(
+         list: *mut c_void,
+@@ -33,12 +51,16 @@ pub unsafe extern "C" fn mozilla_properties_glue_add_property_ranges(
+             return false;
+         }
+     }
+-    let Some(prop) = icu_properties::CodePointSetData::new_for_ecma262(name) else {
++    let Some(Ok(prop)) = icu_properties::CodePointSetData::try_new_for_ecma262_with_buffer_provider(
++        icu_provider_glue::provider(),
++        name,
++    ) else {
+         return false;
+     };
++    let prop = prop.as_borrowed();
+     if needs_case_folding {
+         let mut builder = CodePointInversionListBuilder::new();
+-        let mapper = icu_casemap::CaseMapperBorrowed::new();
++        let mapper = case_mapper();
+         for range in prop.iter_ranges() {
+             builder.add_range32(range.clone());
+             for u in range {
+diff --git a/unicode_bidi_ffi/Cargo.toml b/unicode_bidi_ffi/Cargo.toml
+index 689f00637..a7ad46509 100644
+--- a/unicode_bidi_ffi/Cargo.toml
++++ b/unicode_bidi_ffi/Cargo.toml
+@@ -10,7 +10,9 @@ edition = "2021"
+ 
+ [dependencies]
+ unicode-bidi = { version = "0.3.15", features = ["smallvec"] }
+-icu_properties = { version = "2.0.0", features = ["unicode_bidi"] }
++icu_properties = { version = "2.0.0", default-features = false, features = ["unicode_bidi", "serde"] }
++icu_provider = { version = "2", features = ["serde", "sync"] }
++icu_provider_glue = { package = "mozjs_icu_provider_glue", version = "=153.0.0", path = "../icu_provider_glue" }
+ 
+ [build-dependencies.cbindgen]
+ version = "0.29.4"
+diff --git a/unicode_bidi_ffi/src/lib.rs b/unicode_bidi_ffi/src/lib.rs
+index eaf4032c1..4d3f2a46e 100644
+--- a/unicode_bidi_ffi/src/lib.rs
++++ b/unicode_bidi_ffi/src/lib.rs
+@@ -2,8 +2,25 @@
+  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
+  * You can obtain one at http://mozilla.org/MPL/2.0/. */
+ 
++use std::sync::OnceLock;
++
+ use icu_properties::CodePointMapData;
+ 
++/// The bidi class map, built once from the ICU4X data blob.
++///
++/// `unicode-bidi` takes it by reference per call, and building it deserializes
++/// from the blob, so it is cached.
++fn bidi_class_map() -> &'static CodePointMapData<icu_properties::props::BidiClass> {
++    static CELL: OnceLock<CodePointMapData<icu_properties::props::BidiClass>> = OnceLock::new();
++    CELL.get_or_init(|| {
++        use icu_provider::buf::AsDeserializingBufferProvider;
++        CodePointMapData::<icu_properties::props::BidiClass>::try_new_unstable(
++            &icu_provider_glue::provider().as_deserializing(),
++        )
++        .expect("the ICU4X data blob has no bidi class data")
++    })
++}
++
+ use unicode_bidi::level::Level;
+ use unicode_bidi::utf16;
+ use unicode_bidi::Direction;
+@@ -40,7 +57,7 @@ impl UnicodeBidi<'_> {
+         } else {
+             None
+         };
+-        let adapter = CodePointMapData::<icu_properties::props::BidiClass>::new();
++        let adapter = bidi_class_map().as_borrowed();
+         Box::new(UnicodeBidi {
+             paragraph_info: utf16::ParagraphBidiInfo::new_with_data_source(&adapter, text, level),
+             resolved: None,
+@@ -150,7 +167,7 @@ pub extern "C" fn bidi_get_base_direction(
+     first_paragraph: bool,
+ ) -> i8 {
+     let text = unsafe { slice::from_raw_parts(text, length) };
+-    let adapter = CodePointMapData::<icu_properties::props::BidiClass>::new();
++    let adapter = bidi_class_map().as_borrowed();
+     let direction = if first_paragraph {
+         unicode_bidi::get_base_direction_with_data_source(&adapter, text)
+     } else {

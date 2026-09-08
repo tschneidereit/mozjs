@@ -1,0 +1,194 @@
+# ICU4X data markers baked into the blobs in this directory.
+#
+# Derived as the union of two sources, intersected with the markers the datagen
+# in build_icu4x_data.sh supports:
+#
+#   1. `icu4x-datagen --markers-for-bin <a linked mozjs test binary>`. This
+#      matches marker name strings, so it finds attribute-keyed lookups such as
+#      collation tailorings and segmenter dictionaries, and misses singletons
+#      that the compiler inlines under `compiled_data`. It is a lower bound.
+#   2. `provider::MARKERS` from each ICU4X crate mozjs-sys links: icu_properties,
+#      icu_locale, icu_casemap, icu_calendar, icu_time, icu_segmenter, and the
+#      vendored icu_collator and icu_normalizer.
+#
+# To refresh after an ICU4X update, re-run `--markers-for-bin` against a binary
+# built with the buffer provider. Every lookup goes through the provider there,
+# so the marker names are all present and the result is exact.
+#
+# SegmenterDictionaryAutoV1 is the Chinese and Japanese word dictionary. It goes
+# in the separate overlay blob that the `segmenter-cjk` feature adds, never in
+# the main one.
+#
+# Not included: CalendarJapaneseExtendedV1, which icu_calendar declares but no
+# datagen emits. It backs the `japanext` calendar, which Temporal does not
+# expose.
+CalendarJapaneseModernV1
+CalendarWeekV1
+CaseMapUnfoldV1
+CaseMapV1
+CollationDiacriticsV1
+CollationJamoV1
+CollationMetadataV1
+CollationReorderingV1
+CollationRootV1
+CollationSpecialPrimariesV1
+CollationTailoringV1
+LocaleAliasesV1
+LocaleExemplarCharactersAuxiliaryV1
+LocaleExemplarCharactersIndexV1
+LocaleExemplarCharactersMainV1
+LocaleExemplarCharactersNumbersV1
+LocaleExemplarCharactersPunctuationV1
+LocaleLikelySubtagsExtendedV1
+LocaleLikelySubtagsLanguageV1
+LocaleLikelySubtagsScriptRegionV1
+LocaleParentsV1
+LocaleScriptDirectionV1
+NormalizerNfcV1
+NormalizerNfcV2
+NormalizerNfdDataV1
+NormalizerNfdSupplementV1
+NormalizerNfdTablesV1
+NormalizerNfkdDataV1
+NormalizerNfkdTablesV1
+NormalizerUts46DataV1
+PropertyBinaryAlnumV1
+PropertyBinaryAlphabeticV1
+PropertyBinaryAsciiHexDigitV1
+PropertyBinaryBasicEmojiV1
+PropertyBinaryBidiControlV1
+PropertyBinaryBidiMirroredV1
+PropertyBinaryBlankV1
+PropertyBinaryCaseIgnorableV1
+PropertyBinaryCaseSensitiveV1
+PropertyBinaryCasedV1
+PropertyBinaryChangesWhenCasefoldedV1
+PropertyBinaryChangesWhenCasemappedV1
+PropertyBinaryChangesWhenLowercasedV1
+PropertyBinaryChangesWhenNfkcCasefoldedV1
+PropertyBinaryChangesWhenTitlecasedV1
+PropertyBinaryChangesWhenUppercasedV1
+PropertyBinaryDashV1
+PropertyBinaryDefaultIgnorableCodePointV1
+PropertyBinaryDeprecatedV1
+PropertyBinaryDiacriticV1
+PropertyBinaryEmojiComponentV1
+PropertyBinaryEmojiModifierBaseV1
+PropertyBinaryEmojiModifierV1
+PropertyBinaryEmojiPresentationV1
+PropertyBinaryEmojiV1
+PropertyBinaryExtendedPictographicV1
+PropertyBinaryExtenderV1
+PropertyBinaryFullCompositionExclusionV1
+PropertyBinaryGraphV1
+PropertyBinaryGraphemeBaseV1
+PropertyBinaryGraphemeExtendV1
+PropertyBinaryGraphemeLinkV1
+PropertyBinaryHexDigitV1
+PropertyBinaryHyphenV1
+PropertyBinaryIdCompatMathContinueV1
+PropertyBinaryIdCompatMathStartV1
+PropertyBinaryIdContinueV1
+PropertyBinaryIdStartV1
+PropertyBinaryIdeographicV1
+PropertyBinaryIdsBinaryOperatorV1
+PropertyBinaryIdsTrinaryOperatorV1
+PropertyBinaryIdsUnaryOperatorV1
+PropertyBinaryJoinControlV1
+PropertyBinaryLogicalOrderExceptionV1
+PropertyBinaryLowercaseV1
+PropertyBinaryMathV1
+PropertyBinaryModifierCombiningMarkV1
+PropertyBinaryNfcInertV1
+PropertyBinaryNfdInertV1
+PropertyBinaryNfkcInertV1
+PropertyBinaryNfkdInertV1
+PropertyBinaryNoncharacterCodePointV1
+PropertyBinaryPatternSyntaxV1
+PropertyBinaryPatternWhiteSpaceV1
+PropertyBinaryPrependedConcatenationMarkV1
+PropertyBinaryPrintV1
+PropertyBinaryQuotationMarkV1
+PropertyBinaryRadicalV1
+PropertyBinaryRegionalIndicatorV1
+PropertyBinarySegmentStarterV1
+PropertyBinarySentenceTerminalV1
+PropertyBinarySoftDottedV1
+PropertyBinaryTerminalPunctuationV1
+PropertyBinaryUnifiedIdeographV1
+PropertyBinaryUppercaseV1
+PropertyBinaryVariationSelectorV1
+PropertyBinaryWhiteSpaceV1
+PropertyBinaryXdigitV1
+PropertyBinaryXidContinueV1
+PropertyBinaryXidStartV1
+PropertyEnumBidiClassV1
+PropertyEnumBidiMirroringGlyphV1
+PropertyEnumCanonicalCombiningClassV1
+PropertyEnumEastAsianWidthV1
+PropertyEnumGeneralCategoryV1
+PropertyEnumGraphemeClusterBreakV1
+PropertyEnumHangulSyllableTypeV1
+PropertyEnumIndicConjunctBreakV1
+PropertyEnumIndicSyllabicCategoryV1
+PropertyEnumJoiningTypeV1
+PropertyEnumLineBreakV1
+PropertyEnumScriptV1
+PropertyEnumSentenceBreakV1
+PropertyEnumVerticalOrientationV1
+PropertyEnumWordBreakV1
+PropertyNameLongBidiClassV1
+PropertyNameLongCanonicalCombiningClassV1
+PropertyNameLongEastAsianWidthV1
+PropertyNameLongGeneralCategoryV1
+PropertyNameLongGraphemeClusterBreakV1
+PropertyNameLongHangulSyllableTypeV1
+PropertyNameLongIndicConjunctBreakV1
+PropertyNameLongIndicSyllabicCategoryV1
+PropertyNameLongJoiningTypeV1
+PropertyNameLongLineBreakV1
+PropertyNameLongScriptV1
+PropertyNameLongSentenceBreakV1
+PropertyNameLongVerticalOrientationV1
+PropertyNameLongWordBreakV1
+PropertyNameParseBidiClassV1
+PropertyNameParseCanonicalCombiningClassV1
+PropertyNameParseEastAsianWidthV1
+PropertyNameParseGeneralCategoryMaskV1
+PropertyNameParseGeneralCategoryV1
+PropertyNameParseGraphemeClusterBreakV1
+PropertyNameParseHangulSyllableTypeV1
+PropertyNameParseIndicConjunctBreakV1
+PropertyNameParseIndicSyllabicCategoryV1
+PropertyNameParseJoiningTypeV1
+PropertyNameParseLineBreakV1
+PropertyNameParseScriptV1
+PropertyNameParseSentenceBreakV1
+PropertyNameParseVerticalOrientationV1
+PropertyNameParseWordBreakV1
+PropertyNameShortBidiClassV1
+PropertyNameShortCanonicalCombiningClassV1
+PropertyNameShortEastAsianWidthV1
+PropertyNameShortGeneralCategoryV1
+PropertyNameShortGraphemeClusterBreakV1
+PropertyNameShortHangulSyllableTypeV1
+PropertyNameShortIndicConjunctBreakV1
+PropertyNameShortIndicSyllabicCategoryV1
+PropertyNameShortJoiningTypeV1
+PropertyNameShortLineBreakV1
+PropertyNameShortScriptV1
+PropertyNameShortSentenceBreakV1
+PropertyNameShortVerticalOrientationV1
+PropertyNameShortWordBreakV1
+PropertyScriptWithExtensionsV1
+SegmenterBreakGraphemeClusterV1
+SegmenterBreakSentenceOverrideV1
+SegmenterBreakSentenceV1
+SegmenterBreakWordOverrideV1
+SegmenterBreakWordV1
+SegmenterDictionaryAutoV1
+SegmenterLstmAutoV1
+TimezoneIdentifiersIanaCoreV1
+TimezoneIdentifiersIanaExtendedV1
+TimezoneIdentifiersWindowsV1
+TimezonePeriodsV1

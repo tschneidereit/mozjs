@@ -1,0 +1,301 @@
+From: Till Schneidereit <till@tillschneidereit.net>
+Subject: [PATCH] Take ICU4X data from a blob provider instead of compiled-in data
+
+The generated ICU4X constructors take the compiled-in data provider, which links
+the full ICU4X data set into every binary. ICU4XProvider holds a process-wide
+provider built from a postcard blob, registered through SetICU4XData, and adds
+wrappers that keep the original constructor names but bind that provider. The
+call sites name the wrappers, and Segmenter queries
+ICU4XHasSegmenterDictionary for whether the blob carries the CJK dictionaries.
+---
+diff --git a/intl/components/moz.build b/intl/components/moz.build
+index a3319c7a5..887023968 100644
+--- a/intl/components/moz.build
++++ b/intl/components/moz.build
+@@ -18,6 +18,7 @@ EXPORTS.mozilla.intl = [
+     "src/GeneralCategory.h",
+     "src/ICU4CGlue.h",
+     "src/ICU4CLibrary.h",
++    "src/ICU4XProvider.h",
+     "src/ICUError.h",
+     "src/ListFormat.h",
+     "src/Locale.h",
+@@ -49,6 +50,7 @@ UNIFIED_SOURCES += [
+     "src/DisplayNames.cpp",
+     "src/ICU4CGlue.cpp",
+     "src/ICU4CLibrary.cpp",
++    "src/ICU4XProvider.cpp",
+     "src/ListFormat.cpp",
+     "src/Locale.cpp",
+     "src/LocaleCanonicalizer.cpp",
+diff --git a/intl/components/src/ICU4XProvider.cpp b/intl/components/src/ICU4XProvider.cpp
+new file mode 100644
+index 000000000..6d9862fa7
+--- /dev/null
++++ b/intl/components/src/ICU4XProvider.cpp
+@@ -0,0 +1,57 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++
++#include "mozilla/intl/ICU4XProvider.h"
++
++namespace {
++// Owned for the life of the process. ICU4X borrows the blob rather than copying
++// it, so the bytes behind it must outlive this too, which is why the Rust side
++// requires them to be `'static`.
++const icu4x::capi::DataProvider* gProvider = nullptr;
++bool gHasSegmenterDictionary = false;
++}  // namespace
++
++namespace mozilla::intl {
++
++const icu4x::capi::DataProvider* ICU4XProvider() { return gProvider; }
++
++bool ICU4XHasSegmenterDictionary() { return gHasSegmenterDictionary; }
++
++}  // namespace mozilla::intl
++
++extern "C" bool SetICU4XData(const uint8_t* data, size_t length,
++                             const uint8_t* cjk, size_t cjkLength) {
++  if (gProvider) {
++    return true;
++  }
++
++  auto result = icu4x::capi::icu4x_DataProvider_from_byte_slice_mv1(
++      icu4x::diplomat::capi::DiplomatU8View{data, length});
++  if (!result.is_ok) {
++    return false;
++  }
++  icu4x::capi::DataProvider* provider = result.ok;
++
++  if (cjk) {
++    auto overlay = icu4x::capi::icu4x_DataProvider_from_byte_slice_mv1(
++        icu4x::diplomat::capi::DiplomatU8View{cjk, cjkLength});
++    if (!overlay.is_ok) {
++      icu4x::capi::icu4x_DataProvider_destroy_mv1(provider);
++      return false;
++    }
++    // Merging consumes the overlay, leaving it empty, and leaves the union in
++    // `provider`.
++    auto merged =
++        icu4x::capi::icu4x_DataProvider_fork_by_marker_mv1(provider, overlay.ok);
++    icu4x::capi::icu4x_DataProvider_destroy_mv1(overlay.ok);
++    if (!merged.is_ok) {
++      icu4x::capi::icu4x_DataProvider_destroy_mv1(provider);
++      return false;
++    }
++    gHasSegmenterDictionary = true;
++  }
++
++  gProvider = provider;
++  return true;
++}
+diff --git a/intl/components/src/ICU4XProvider.h b/intl/components/src/ICU4XProvider.h
+new file mode 100644
+index 000000000..a8b6a383e
+--- /dev/null
++++ b/intl/components/src/ICU4XProvider.h
+@@ -0,0 +1,117 @@
++/* This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. If a copy of the MPL was not distributed with this
++ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
++#ifndef intl_components_ICU4XProvider_h_
++#define intl_components_ICU4XProvider_h_
++
++#include <stddef.h>
++#include <stdint.h>
++
++#include "icu4x/Calendar.hpp"
++#include "icu4x/DataProvider.hpp"
++#include "icu4x/GraphemeClusterSegmenter.hpp"
++#include "icu4x/SentenceSegmenter.hpp"
++#include "icu4x/WordSegmenter.hpp"
++
++/**
++ * Registers the ICU4X data blob and builds the process-wide provider.
++ *
++ * `cjk`, when non-null, is merged in and supplies the segmenter's Chinese and
++ * Japanese word dictionary. Called from `mozjs_sys::icu` before the engine
++ * starts. Returns false if ICU4X rejects either blob. A second call with a
++ * provider already registered succeeds and changes nothing.
++ */
++extern "C" bool SetICU4XData(const uint8_t* data, size_t length,
++                             const uint8_t* cjk, size_t cjkLength);
++
++namespace mozilla::intl {
++
++/**
++ * The provider registered by `SetICU4XData`, or null if none was.
++ */
++const icu4x::capi::DataProvider* ICU4XProvider();
++
++/**
++ * Whether the registered data includes the Chinese and Japanese word
++ * dictionary.
++ */
++bool ICU4XHasSegmenterDictionary();
++
++}  // namespace mozilla::intl
++
++/**
++ * Wrappers carrying the names and signatures of the compiled-data constructors,
++ * with the registered provider bound as the leading argument.
++ *
++ * The call sites name these instead of the `icu4x::capi::` originals, so that
++ * the data comes from the blob. They are functions rather than macros because the
++ * call sites in Segmenter.cpp take the constructor's address rather than
++ * calling it, and because the `_with_provider` variants have a different arity.
++ */
++namespace mozilla::intl::icu4x_provider {
++
++inline icu4x::capi::GraphemeClusterSegmenter*
++icu4x_GraphemeClusterSegmenter_create_mv1() {
++  auto result =
++      icu4x::capi::icu4x_GraphemeClusterSegmenter_create_with_provider_mv1(
++          ICU4XProvider());
++  return result.is_ok ? result.ok : nullptr;
++}
++
++inline icu4x::capi::icu4x_WordSegmenter_create_auto_with_content_locale_mv1_result
++icu4x_WordSegmenter_create_auto_with_content_locale_mv1(
++    const icu4x::capi::Locale* locale) {
++  icu4x::capi::icu4x_WordSegmenter_create_auto_with_content_locale_mv1_result
++      out;
++  // Selected from the models the blob holds, so that a build without the
++  // dictionary asks for the models it has rather than failing.
++  if (ICU4XHasSegmenterDictionary()) {
++    auto result = icu4x::capi::
++        icu4x_WordSegmenter_create_auto_with_content_locale_and_provider_mv1(
++            ICU4XProvider(), locale);
++    out.is_ok = result.is_ok;
++    if (result.is_ok) {
++      out.ok = result.ok;
++    } else {
++      out.err = result.err;
++    }
++  } else {
++    auto result = icu4x::capi::
++        icu4x_WordSegmenter_create_lstm_with_content_locale_and_provider_mv1(
++            ICU4XProvider(), locale);
++    out.is_ok = result.is_ok;
++    if (result.is_ok) {
++      out.ok = result.ok;
++    } else {
++      out.err = result.err;
++    }
++  }
++  return out;
++}
++
++inline icu4x::capi::icu4x_SentenceSegmenter_create_with_content_locale_mv1_result
++icu4x_SentenceSegmenter_create_with_content_locale_mv1(
++    const icu4x::capi::Locale* locale) {
++  auto result = icu4x::capi::
++      icu4x_SentenceSegmenter_create_with_content_locale_and_provider_mv1(
++          ICU4XProvider(), locale);
++  icu4x::capi::icu4x_SentenceSegmenter_create_with_content_locale_mv1_result out;
++  out.is_ok = result.is_ok;
++  if (result.is_ok) {
++    out.ok = result.ok;
++  } else {
++    out.err = result.err;
++  }
++  return out;
++}
++
++inline icu4x::capi::Calendar* icu4x_Calendar_create_mv1(
++    icu4x::capi::CalendarKind kind) {
++  auto result =
++      icu4x::capi::icu4x_Calendar_create_with_provider_mv1(ICU4XProvider(), kind);
++  return result.is_ok ? result.ok : nullptr;
++}
++
++}  // namespace mozilla::intl::icu4x_provider
++
++#endif /* intl_components_ICU4XProvider_h_ */
+diff --git a/intl/components/src/calendar/ICU4XCalendar.cpp b/intl/components/src/calendar/ICU4XCalendar.cpp
+index eaa7ffe04..782001fc6 100644
+--- a/intl/components/src/calendar/ICU4XCalendar.cpp
++++ b/intl/components/src/calendar/ICU4XCalendar.cpp
+@@ -2,6 +2,7 @@
+  * License, v. 2.0. If a copy of the MPL was not distributed with this
+  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+ 
++#include "mozilla/intl/ICU4XProvider.h"
+ #include "mozilla/intl/calendar/ICU4XCalendar.h"
+ 
+ #include "mozilla/Assertions.h"
+@@ -27,7 +28,7 @@ static constexpr uint8_t AsciiDigitToNumber(CharT c) {
+ }
+ 
+ static UniqueICU4XCalendar CreateICU4XCalendar(icu4x::capi::CalendarKind kind) {
+-  auto* result = icu4x::capi::icu4x_Calendar_create_mv1(kind);
++  auto* result = mozilla::intl::icu4x_provider::icu4x_Calendar_create_mv1(kind);
+   return UniqueICU4XCalendar{result};
+ }
+ 
+diff --git a/js/src/builtin/intl/Segmenter.cpp b/js/src/builtin/intl/Segmenter.cpp
+index 3b13c9ed4..0b728b6ba 100644
+--- a/js/src/builtin/intl/Segmenter.cpp
++++ b/js/src/builtin/intl/Segmenter.cpp
+@@ -20,6 +20,8 @@
+ #include "builtin/intl/StringAsciiChars.h"
+ #include "gc/AllocKind.h"
+ #include "gc/GCContext.h"
++#include "mozilla/intl/ICU4XProvider.h"
++
+ #include "icu4x/GraphemeClusterSegmenter.hpp"
+ #include "icu4x/Locale.hpp"
+ #include "icu4x/SentenceSegmenter.hpp"
+@@ -396,7 +398,7 @@ struct GraphemeClusterSegmenter {
+       SegmenterBreakIteratorType<GraphemeClusterSegmenterBreakIteratorTwoByte>;
+ 
+   static constexpr auto& create =
+-      icu4x::capi::icu4x_GraphemeClusterSegmenter_create_mv1;
++      mozilla::intl::icu4x_provider::icu4x_GraphemeClusterSegmenter_create_mv1;
+   static constexpr auto& destroy =
+       icu4x::capi::icu4x_GraphemeClusterSegmenter_destroy_mv1;
+ };
+@@ -441,7 +443,8 @@ struct WordSegmenter {
+       SegmenterBreakIteratorType<WordSegmenterBreakIteratorTwoByte>;
+ 
+   static constexpr auto& create =
+-      icu4x::capi::icu4x_WordSegmenter_create_auto_with_content_locale_mv1;
++      mozilla::intl::icu4x_provider::
++          icu4x_WordSegmenter_create_auto_with_content_locale_mv1;
+   static constexpr auto& destroy = icu4x::capi::icu4x_WordSegmenter_destroy_mv1;
+ };
+ 
+@@ -485,7 +488,8 @@ struct SentenceSegmenter {
+       SegmenterBreakIteratorType<SentenceSegmenterBreakIteratorTwoByte>;
+ 
+   static constexpr auto& create =
+-      icu4x::capi::icu4x_SentenceSegmenter_create_with_content_locale_mv1;
++      mozilla::intl::icu4x_provider::
++          icu4x_SentenceSegmenter_create_with_content_locale_mv1;
+   static constexpr auto& destroy =
+       icu4x::capi::icu4x_SentenceSegmenter_destroy_mv1;
+ };
+diff --git a/js/src/builtin/temporal/Calendar.cpp b/js/src/builtin/temporal/Calendar.cpp
+index 55eed999f..57388d49e 100644
+--- a/js/src/builtin/temporal/Calendar.cpp
++++ b/js/src/builtin/temporal/Calendar.cpp
+@@ -2,6 +2,7 @@
+  * License, v. 2.0. If a copy of the MPL was not distributed with this
+  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+ 
++#include "mozilla/intl/ICU4XProvider.h"
+ #include "builtin/temporal/Calendar.h"
+ 
+ #include "mozilla/Assertions.h"
+@@ -614,7 +615,8 @@ using UniqueICU4XCalendar =
+     mozilla::UniquePtr<icu4x::capi::Calendar, ICU4XCalendarDeleter>;
+ 
+ static UniqueICU4XCalendar CreateICU4XCalendar(CalendarId id) {
+-  auto* result = icu4x::capi::icu4x_Calendar_create_mv1(ToAnyCalendarKind(id));
++  auto* result = mozilla::intl::icu4x_provider::icu4x_Calendar_create_mv1(
++      ToAnyCalendarKind(id));
+   MOZ_ASSERT(result, "unexpected null-pointer result");
+   return UniqueICU4XCalendar{result};
+ }

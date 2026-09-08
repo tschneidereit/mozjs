@@ -18,17 +18,19 @@ use mozjs::rust::{
     evaluate_script, CompileOptionsWrapper, JSEngine, RealmOptions, Runtime, SIMPLE_GLOBAL_CLASS,
 };
 
-/// `set_data` takes `&'static [u8]` and ICU keeps the pointer, so the bytes an
-/// embedder supplies have to carry ICU's alignment themselves.
+/// ICU keeps the pointer to the ICU4C package and requires it 16-byte aligned,
+/// so an embedder has to align the bytes it supplies. The ICU4X blob has no
+/// alignment requirement, but goes through the same wrapper here.
 #[repr(C, align(16))]
 struct Aligned<T: ?Sized>(T);
 
-static DATA: &Aligned<[u8]> =
+static ICU4C: &Aligned<[u8]> =
     &Aligned(*include_bytes!("../../mozjs-sys/icu-data/icudt78l-min.dat"));
+static ICU4X: &Aligned<[u8]> = &Aligned(*include_bytes!("../../mozjs-sys/icu-data/icu4x.postcard"));
 
 #[test]
 fn supplied_data_serves_intl() {
-    mozjs::icu::set_data(&DATA.0).expect("set_data was called twice");
+    mozjs::icu::set_data(&ICU4C.0, &ICU4X.0, None).expect("set_data was called twice");
 
     let engine = JSEngine::init().expect("engine did not accept the supplied data");
     let mut runtime = Runtime::new(engine.handle());
@@ -46,12 +48,15 @@ fn supplied_data_serves_intl() {
         evaluate_script(
             context,
             global.handle(),
-            "String(new Intl.NumberFormat('de').format(1234.5))",
+            // Covers both bundles: the ICU4C package for the locale data and
+            // the ICU4X blob for normalization.
+            "String(new Intl.NumberFormat('de').format(1234.5) + '|' + \
+             'a\\u0301'.normalize('NFC'))",
             rval.handle_mut(),
             options,
         )
         .expect("evaluation failed");
         let string = NonNull::new(rval.get().to_string()).expect("not a string");
-        assert_eq!(jsstr_to_string(&context, string), "1.234,5");
+        assert_eq!(jsstr_to_string(&context, string), "1.234,5|\u{e1}");
     }
 }

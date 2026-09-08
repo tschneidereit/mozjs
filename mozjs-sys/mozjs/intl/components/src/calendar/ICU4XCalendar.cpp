@@ -2,6 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "mozilla/intl/ICU4XProvider.h"
 #include "mozilla/intl/calendar/ICU4XCalendar.h"
 
 #include "mozilla/Assertions.h"
@@ -27,7 +28,7 @@ static constexpr uint8_t AsciiDigitToNumber(CharT c) {
 }
 
 static UniqueICU4XCalendar CreateICU4XCalendar(icu4x::capi::CalendarKind kind) {
-  auto* result = icu4x::capi::icu4x_Calendar_create_mv1(kind);
+  auto* result = mozilla::intl::icu4x_provider::icu4x_Calendar_create_mv1(kind);
   return UniqueICU4XCalendar{result};
 }
 

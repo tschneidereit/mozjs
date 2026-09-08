@@ -6,8 +6,29 @@ use std::ffi::c_char;
 
 use icu_locale::Direction;
 use icu_locale::LanguageIdentifier;
+use std::sync::OnceLock;
+
 use icu_locale::LocaleDirectionality;
 use icu_locale::LocaleExpander;
+
+/// The locale expander and directionality, each built once from the ICU4X data
+/// blob. Building one deserializes from the blob, and this is called per
+/// request.
+fn expander() -> &'static LocaleExpander {
+    static CELL: OnceLock<LocaleExpander> = OnceLock::new();
+    CELL.get_or_init(|| {
+        LocaleExpander::try_new_extended_with_buffer_provider(icu_provider_glue::provider())
+            .expect("the ICU4X data blob has no likely-subtags data")
+    })
+}
+
+fn directionality() -> &'static LocaleDirectionality {
+    static CELL: OnceLock<LocaleDirectionality> = OnceLock::new();
+    CELL.get_or_init(|| {
+        LocaleDirectionality::try_new_extended_with_buffer_provider(icu_provider_glue::provider())
+            .expect("the ICU4X data blob has no script direction data")
+    })
+}
 
 /// Text direction.
 #[repr(u8)]
@@ -44,22 +65,18 @@ pub unsafe extern "C" fn locale_text_direction_of(
         return TextDirection::Unknown;
     };
 
-    let expander = LocaleExpander::new_extended();
-
     // Manually maximize to handle inputs like "und" or "und-US".
     //
     // https://github.com/unicode-org/icu4x/issues/7866
     if lang_id.script.is_none() {
-        expander.maximize(&mut lang_id);
+        expander().maximize(&mut lang_id);
 
         if lang_id.script.is_none() {
             return TextDirection::Unknown;
         }
     }
 
-    let ld = LocaleDirectionality::new_with_expander(expander);
-
-    return match ld.get(&lang_id) {
+    return match directionality().get(&lang_id) {
         Some(Direction::LeftToRight) => TextDirection::LeftToRight,
         Some(Direction::RightToLeft) => TextDirection::RightToLeft,
         Some(_) => TextDirection::Unknown,

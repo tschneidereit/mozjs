@@ -56,7 +56,13 @@ namespace glue {
 
 // Reexport some functions that are marked inline.
 
-bool JS_Init() { return ::JS_Init(); }
+// ICU reads its data through packages registered at runtime, so they are
+// installed here rather than resolved at link time. Doing it in `JS_Init`
+// rather than only in the Rust `JSEngine::init` wrapper means every way into
+// the engine gets the data. `mozjs_install_icu_data` is idempotent.
+extern "C" bool mozjs_install_icu_data();
+
+bool JS_Init() { return mozjs_install_icu_data() && ::JS_Init(); }
 
 JS::RealmOptions* JS_NewRealmOptions() {
   JS::RealmOptions* result = new JS::RealmOptions;

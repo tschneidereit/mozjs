@@ -48,7 +48,12 @@ const SM_TARGET_ENV_VARS: &'static [&'static str] = &[
     "WASI_SDK_PATH",
 ];
 
-const EXTRA_FILES: &'static [&'static str] = &["makefile.cargo"];
+/// Files outside `mozjs` that the build depends on.
+///
+/// The C++ sources belong here because nothing else makes the build script
+/// rerun when they change: the walk above covers `mozjs`, and bindgen reports
+/// only the headers it reads.
+const EXTRA_FILES: &'static [&'static str] = &["makefile.cargo", "src/jsapi.cpp", "src/jsglue.cpp"];
 
 /// The version of moztools we expect.
 #[cfg(windows)]

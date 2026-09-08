@@ -2,7 +2,24 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+use std::sync::OnceLock;
+
 use icu_properties::CodePointMapData;
+
+/// The bidi class map, built once from the ICU4X data blob.
+///
+/// `unicode-bidi` takes it by reference per call, and building it deserializes
+/// from the blob, so it is cached.
+fn bidi_class_map() -> &'static CodePointMapData<icu_properties::props::BidiClass> {
+    static CELL: OnceLock<CodePointMapData<icu_properties::props::BidiClass>> = OnceLock::new();
+    CELL.get_or_init(|| {
+        use icu_provider::buf::AsDeserializingBufferProvider;
+        CodePointMapData::<icu_properties::props::BidiClass>::try_new_unstable(
+            &icu_provider_glue::provider().as_deserializing(),
+        )
+        .expect("the ICU4X data blob has no bidi class data")
+    })
+}
 
 use unicode_bidi::level::Level;
 use unicode_bidi::utf16;
@@ -40,7 +57,7 @@ impl UnicodeBidi<'_> {
         } else {
             None
         };
-        let adapter = CodePointMapData::<icu_properties::props::BidiClass>::new();
+        let adapter = bidi_class_map().as_borrowed();
         Box::new(UnicodeBidi {
             paragraph_info: utf16::ParagraphBidiInfo::new_with_data_source(&adapter, text, level),
             resolved: None,
@@ -150,7 +167,7 @@ pub extern "C" fn bidi_get_base_direction(
     first_paragraph: bool,
 ) -> i8 {
     let text = unsafe { slice::from_raw_parts(text, length) };
-    let adapter = CodePointMapData::<icu_properties::props::BidiClass>::new();
+    let adapter = bidi_class_map().as_borrowed();
     let direction = if first_paragraph {
         unicode_bidi::get_base_direction_with_data_source(&adapter, text)
     } else {

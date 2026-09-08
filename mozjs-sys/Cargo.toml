@@ -35,6 +35,9 @@ libz-rs = ["dep:libz-rs-sys"]
 # are additive: a default-on feature could only be turned off by disabling every
 # default and re-listing the rest.
 external-icu-data = []
+# Adds the Chinese and Japanese word dictionary to Intl.Segmenter's word
+# granularity, as a second ICU4X blob merged onto the first. Roughly 1.9 MB.
+segmenter-cjk = []
 intl = [
   "dep:icu_capi",
   "dep:mozjs_unicode_bidi_ffi",
@@ -57,13 +60,13 @@ encoding_c = "0.9.8"
 encoding_c_mem = "0.2.6"
 # keep in sync with intl/icu_capi/Cargo.toml
 icu_capi = { version = "=2.1.2", default-features = false, features = [
-  "any_provider",
-  "compiled_data",
+  "buffer_provider",
   "segmenter",
   "calendar",
 ], optional = true }
 mozjs_unicode_bidi_ffi = { version = "=153.0.0", path = "../mozjs-extracted-crates/unicode_bidi_ffi", optional = true }
 mozjs_normalizer_glue = { version = "=153.0.0", path = "../mozjs-extracted-crates/normalizer_glue" }
+mozjs_icu_provider_glue = { version = "=153.0.0", path = "../mozjs-extracted-crates/icu_provider_glue" }
 mozjs_properties_glue = { version = "=153.0.0", path = "../mozjs-extracted-crates/properties_glue", optional = true }
 mozjs_collator_glue = { version = "=153.0.0", path = "../mozjs-extracted-crates/collator_glue", optional = true }
 mozjs_locale_glue = { version = "=153.0.0", path = "../mozjs-extracted-crates/locale_glue", optional = true }
