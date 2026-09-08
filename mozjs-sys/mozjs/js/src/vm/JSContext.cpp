@@ -831,6 +831,11 @@ JS_PUBLIC_API void js::RestartDrainingJobQueue(JSContext* cx) {
   cx->internalJobQueue->uninterrupt();
 }
 
+JS_PUBLIC_API bool js::HasJobsPending(JSContext* cx) {
+  MOZ_ASSERT(cx->jobQueue);
+  return JS::HasAnyMicroTasks(cx);
+}
+
 JS_PUBLIC_API void js::RunJobs(JSContext* cx) {
   MOZ_ASSERT(cx->jobQueue);
   MOZ_ASSERT(cx->isEvaluatingModule == 0);
@@ -849,6 +854,11 @@ bool InternalJobQueue::getHostDefinedData(
   incumbentGlobal.set(nullptr);
   optionalHostDefinedData.set(nullptr);
   return true;
+}
+
+JS_PUBLIC_API void js::ResetMathRandomSeed(JSContext* cx) {
+  MOZ_ASSERT(cx->realm());
+  cx->realm()->resetRandomNumberGenerator();
 }
 
 void InternalJobQueue::runJobs(JSContext* cx) {
