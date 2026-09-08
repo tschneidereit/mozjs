@@ -615,6 +615,8 @@ fn get_common_cc(build_dir: &Path, target: BuildTarget) -> cc::Build {
         if !target_triple.contains("windows") {
             builder.debug(true);
         }
+    } else if target.contains("wasi") {
+        flags.push("-flto=thin");
     }
 
     if get_cc_rs_env_os("CXXSTDLIB").is_none() {
