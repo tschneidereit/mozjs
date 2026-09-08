@@ -261,6 +261,10 @@ static inline void* MapInternal(void* desired, size_t length) {
   return region;
 }
 
+#ifdef __wasi__
+static bool ReleaseChunkToFreeList(void* region, size_t length);
+#endif
+
 static inline void UnmapInternal(void* region, size_t length) {
   MOZ_ASSERT(region && OffsetFromAligned(region, allocGranularity) == 0);
   MOZ_ASSERT(length > 0 && length % pageSize == 0);
@@ -268,7 +272,9 @@ static inline void UnmapInternal(void* region, size_t length) {
 #ifdef XP_WIN
   MOZ_RELEASE_ASSERT(VirtualFree(region, 0, MEM_RELEASE) != 0);
 #elif defined(__wasi__)
-  free(region);
+  if (!ReleaseChunkToFreeList(region, length)) {
+    free(region);
+  }
 #else
   if (munmap(region, length)) {
     MOZ_RELEASE_ASSERT(errno == ENOMEM);
@@ -542,6 +548,56 @@ static inline bool IsInvalidRegion(void* region, size_t length) {
 }
 #endif
 
+#ifdef __wasi__
+// Regions returned by `MapChunkFromLinearMemory` and since released, chained
+// through their first word. Every entry has the size and alignment of the
+// request that created it, so the list is keyed by size alone.
+struct FreeChunk {
+  FreeChunk* next;
+  size_t size;
+};
+static FreeChunk* freeChunks = nullptr;
+
+static constexpr size_t WasmPageSize = 65536;
+
+// Maps `length` bytes at `alignment` (equal to `length`) by growing linear
+// memory to the next aligned address, or reuses a released region of that
+// size.
+static void* MapChunkFromLinearMemory(size_t length, size_t alignment) {
+  MOZ_ASSERT(length == alignment);
+  MOZ_ASSERT(length % WasmPageSize == 0);
+  for (FreeChunk** link = &freeChunks; *link; link = &(*link)->next) {
+    if ((*link)->size == length) {
+      FreeChunk* chunk = *link;
+      *link = chunk->next;
+      memset(chunk, 0, length);
+      return chunk;
+    }
+  }
+  uintptr_t current = uintptr_t(__builtin_wasm_memory_size(0)) * WasmPageSize;
+  uintptr_t aligned = (current + alignment - 1) & ~(alignment - 1);
+  size_t pages = (aligned - current + length) / WasmPageSize;
+  if (__builtin_wasm_memory_grow(0, pages) == SIZE_MAX) {
+    return nullptr;
+  }
+  return reinterpret_cast<void*>(aligned);
+}
+
+// Puts a region that `MapChunkFromLinearMemory` mapped, recognized by being
+// aligned to its own length, back on the free list. Returns false for any
+// other region.
+static bool ReleaseChunkToFreeList(void* region, size_t length) {
+  if (length % WasmPageSize != 0 || (uintptr_t(region) & (length - 1)) != 0) {
+    return false;
+  }
+  FreeChunk* chunk = static_cast<FreeChunk*>(region);
+  chunk->next = freeChunks;
+  chunk->size = length;
+  freeChunks = chunk;
+  return true;
+}
+#endif  // __wasi__
+
 void* MapAlignedPages(size_t length, size_t alignment,
                       StallAndRetry stallAndRetry) {
   MOZ_RELEASE_ASSERT(length > 0 && alignment > 0);
@@ -556,6 +612,15 @@ void* MapAlignedPages(size_t length, size_t alignment,
   }
 
 #ifdef __wasi__
+  // A chunk-sized, chunk-aligned region is allocated by growing linear memory,
+  // so consecutive chunks are contiguous with no alignment padding between
+  // them, and freed ones are reused before memory grows again.
+  // `posix_memalign` would place every such region in a block twice its size,
+  // with the padding never used, doubling the address range that a snapshot of
+  // the heap spans.
+  if (length == alignment) {
+    return MapChunkFromLinearMemory(length, alignment);
+  }
   void* region = nullptr;
   if (int err = posix_memalign(&region, alignment, length)) {
     MOZ_ASSERT(err == ENOMEM);
