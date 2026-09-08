@@ -27,6 +27,7 @@ const ENV_VARS: &'static [&'static str] = &[
     "MOZJS_CREATE_ARCHIVE",
     "MOZJS_FORCE_RERUN",
     "MOZJS_FROM_SOURCE",
+    "MOZJS_REPO",
     "PYTHON",
     "STLPORT_LIBS",
 ];
@@ -70,6 +71,10 @@ fn main() {
             "TARGET_CXX",
             PathBuf::from(&path).join("bin").join("clang++"),
         );
+        // Use the WASI SDK's libclang for bindgen (runtime-loaded via clang-sys).
+        // The SDK's C++ headers require clang 19+ builtins. System clang is often
+        // older.
+        env::set_var("LIBCLANG_PATH", PathBuf::from(&path).join("lib"));
     }
 
     let out_dir = PathBuf::from(env::var_os("OUT_DIR").unwrap());
@@ -77,25 +82,74 @@ fn main() {
 
     // Check if we can link with pre-built archive, and decide if it needs to build from source.
     let mut build_from_source = should_build_from_source();
+    // When using a pre-built archive, this is set to the stable cache directory
+    // where the archive was extracted, so that link/include directives point
+    // there directly without any copying.
+    let mut lib_dir = build_dir.clone();
     if !build_from_source {
         if let Ok(archive) = env::var("MOZJS_ARCHIVE") {
-            // If the archive variable is present, assume it's a URL base to download from.
-            let archive =
-                archive::download_archive(Some(&archive)).unwrap_or(PathBuf::from(archive));
+            let archive_is_debug = archive.contains("-debugmozjs");
+            let feature_is_debug = env::var_os("CARGO_FEATURE_DEBUGMOZJS").is_some();
+            if archive_is_debug != feature_is_debug {
+                panic!(
+                    "MOZJS_ARCHIVE debug/release mismatch: archive `{archive}` is a {} build, \
+                     but the `debugmozjs` feature is {}. The archive's prebuilt bindings must \
+                     match the feature. Use a {}archive, or {} the `debugmozjs` feature.",
+                    if archive_is_debug { "debug" } else { "release" },
+                    if feature_is_debug {
+                        "enabled"
+                    } else {
+                        "disabled"
+                    },
+                    if feature_is_debug {
+                        "-debugmozjs "
+                    } else {
+                        "release (no -debugmozjs) "
+                    },
+                    if archive_is_debug {
+                        "enable"
+                    } else {
+                        "disable"
+                    },
+                );
+            }
+            let archive = if archive.starts_with("http://") || archive.starts_with("https://") {
+                archive::download_url(&archive).expect("Failed to download MOZJS_ARCHIVE URL")
+            } else {
+                eprintln!("Using local prebuilt mozjs static library from {archive}");
+                PathBuf::from(&archive)
+            };
             // Panic directly since the archive is specified manually.
-            archive::decompress_static_lib(&archive, &build_dir).unwrap();
+            lib_dir = archive::decompress_static_lib(&archive).unwrap();
         } else {
             let result = archive::download_archive(None)
-                .and_then(|archive| archive::decompress_static_lib(&archive, &build_dir));
-            if let Err(e) = result {
-                println!("cargo:warning=Failed to link pre-built archive by {e}. Building from source instead.");
-                build_from_source = true;
+                .and_then(|archive| archive::decompress_static_lib(&archive));
+            match result {
+                Ok(dir) => lib_dir = dir,
+                Err(e) => {
+                    println!("cargo:warning=Failed to link pre-built archive by {e}. Building from source instead.");
+                    build_from_source = true;
+                }
             }
         }
 
         if !build_from_source {
-            link_static_lib_binaries(&build_dir);
-            link_bindgen_static_lib_binaries(&build_dir);
+            link_static_lib_binaries(&lib_dir);
+            link_bindgen_static_lib_binaries(&lib_dir);
+
+            // The Rust source files use `include!(concat!(env!("OUT_DIR"), "/build/..."))`,
+            // so the generated binding files must be present at `$OUT_DIR/build/`
+            // even when the archive was extracted to a stable cache directory.
+            fs::create_dir_all(&build_dir).expect("could not create build dir");
+            for binding in ["jsapi.rs", "gluebindings.rs"] {
+                let src = lib_dir.join(binding);
+                let dst = build_dir.join(binding);
+                if src.exists() && src != dst {
+                    fs::copy(&src, &dst).unwrap_or_else(|e| {
+                        panic!("Failed to copy {}: {e}", src.display());
+                    });
+                }
+            }
         }
     }
 
@@ -104,6 +158,12 @@ fn main() {
         // TODO: use this and remove `no-rust-unicode-bidi.patch`
         // cbindgen_bidi(&build_dir);
         build_spidermonkey(&build_dir);
+
+        // Copy js-confdefs.h into dist/include so C++ consumers get it.
+        let confdefs_src = join_path(&build_dir, "js/src/js-confdefs.h");
+        let confdefs_dst = join_path(&build_dir, "dist/include/js-confdefs.h");
+        fs::copy(&confdefs_src, &confdefs_dst).unwrap();
+
         build(&build_dir, BuildTarget::JSApi);
         build_bindings(&build_dir, BuildTarget::JSApi);
         build(&build_dir, BuildTarget::JSGlue);
@@ -115,6 +175,16 @@ fn main() {
                 .expect("Failed to compress static lib binaries.");
         }
     }
+
+    // Expose the SpiderMonkey headers to downstream crates.
+    // Source builds produce headers at `dist/include/`. Archives unpack them
+    // to `include/`. Use whichever path exists.
+    let include_dir = if lib_dir.join("include").exists() {
+        lib_dir.join("include")
+    } else {
+        lib_dir.join("dist").join("include")
+    };
+    println!("cargo:include={}", include_dir.display());
 
     if env::var_os("MOZJS_FORCE_RERUN").is_none() {
         for var in ENV_VARS {
@@ -344,11 +414,38 @@ fn build(build_dir: &Path, target: BuildTarget) {
     let mut build = get_common_cc(build_dir, target);
     build.file(target.path());
 
+    // Suppress the automatic C++ stdlib link directives that the `cc` crate
+    // emits via `cargo:rustc-flags`. C++ stdlib linking is done by
+    // `link_static_lib_binaries` instead, which avoids adding the entire
+    // wasi-sysroot lib directory to the linker search path.
+    build.cpp_link_stdlib(None);
+
     if let Ok(android_api) = env::var("ANDROID_API_LEVEL").as_deref() {
         build.define("__ANDROID_MIN_SDK_VERSION__", android_api);
     }
 
+    // The `cc` crate emits `cargo:rustc-flags=-L {sysroot}/lib/{target}
+    // -lstatic=c++ -lstatic=c++abi` whenever WASI_SYSROOT is set, which puts
+    // the whole wasi-sysroot lib directory on the linker search path. Its
+    // libc.a then shadows Rust's self-contained libc.a, which is the only one
+    // that provides `__wasi_init_tp` on newer toolchains. WASI_SYSROOT is
+    // therefore unset for the duration of `compile()` and passed as an explicit
+    // `--sysroot` flag so that headers still resolve.
+    let wasi_sysroot = env::var("TARGET")
+        .unwrap_or_default()
+        .contains("wasi")
+        .then(|| env::var("WASI_SYSROOT").ok())
+        .flatten();
+    if let Some(sysroot) = &wasi_sysroot {
+        build.flag(&format!("--sysroot={sysroot}"));
+        env::remove_var("WASI_SYSROOT");
+    }
+
     build.out_dir(build_dir).compile(target.output());
+
+    if let Some(sysroot) = wasi_sysroot {
+        env::set_var("WASI_SYSROOT", sysroot);
+    }
 }
 
 /// Invoke bindgen to produce raw FFI bindings for use from Rust.
@@ -413,9 +510,27 @@ fn build_bindings(build_dir: &Path, target: BuildTarget) {
     }
 
     if env::var("TARGET").unwrap().contains("wasi") {
+        let target = env::var("TARGET").unwrap();
         builder = builder
             .clang_arg("--sysroot")
-            .clang_arg(env::var("WASI_SYSROOT").unwrap().to_string());
+            .clang_arg(env::var("WASI_SYSROOT").unwrap().to_string())
+            .clang_arg(format!("--target={}", target));
+
+        // System clang doesn't know about WASI's target-specific C++ include
+        // paths. Add them explicitly so headers like <utility> can be found.
+        if let Some(sdk) = wasi_sdk() {
+            let sdk_path = PathBuf::from(sdk);
+            for dir in [
+                sdk_path.join(format!("share/wasi-sysroot/include/{}/noeh/c++/v1", target)),
+                sdk_path.join(format!("share/wasi-sysroot/include/{}/c++/v1", target)),
+                sdk_path.join("share/wasi-sysroot/include/c++/v1"),
+            ] {
+                if dir.exists() {
+                    let dir_str = dir.display().to_string();
+                    builder = builder.clang_arg("-isystem").clang_arg(dir_str);
+                }
+            }
+        }
     }
 
     if target == BuildTarget::JSGlue {
@@ -493,14 +608,45 @@ fn link_static_lib_binaries(build_dir: &Path) {
         println!("cargo:rustc-link-lib=c++");
     } else if target.contains("windows") && target.contains("gnu") {
         println!("cargo:rustc-link-lib=stdc++");
-    } else if !target.contains("windows") && !target.contains("wasi") {
-        // The build works without this for WASI, and specifying it means
-        // needing to use the WASI-SDK's clang for linking, which is annoying.
+    } else if target.contains("wasi") {
+        let cxx_dir = build_dir.join("wasi-cxx-libs");
+        if let Some(sdk) = wasi_sdk() {
+            // Try the exact target triple first, then fall back to alternative
+            // sysroot lib paths used by different wasi-sdk versions.
+            let sdk_path = Path::new(&sdk);
+            let candidates = [
+                sdk_path.join(format!("share/wasi-sysroot/lib/{target}")),
+                sdk_path.join(format!("share/wasi-sysroot/lib/{target}/noeh")),
+                sdk_path.join("share/wasi-sysroot/lib/wasm32-wasi"),
+                sdk_path.join("share/wasi-sysroot/lib/wasm32-wasip1"),
+                sdk_path.join("share/wasi-sysroot/lib/wasm32-wasip2"),
+                sdk_path.join("share/wasi-sysroot/lib/wasm32-wasip2/noeh"),
+            ];
+            let sysroot_lib = candidates.iter().find(|p| p.join("libc++.a").exists());
+            // Copy only the C++ libraries to the build directory instead of adding
+            // the entire sysroot lib path. The sysroot also contains libc.a, which
+            // can shadow the Rust sysroot's libc.a and cause missing symbols
+            // (e.g. __wasi_init_tp) on newer Rust toolchains.
+            let _ = fs::create_dir_all(&cxx_dir);
+            if let Some(sysroot_lib) = sysroot_lib {
+                for lib in &["libc++.a", "libc++abi.a"] {
+                    let src = sysroot_lib.join(lib);
+                    let dst = cxx_dir.join(lib);
+                    if src.exists() {
+                        let _ = fs::copy(&src, &dst);
+                    }
+                }
+            }
+            println!("cargo:rustc-link-search=native={}", cxx_dir.display());
+        } else if cxx_dir.join("libc++.a").exists() && cxx_dir.join("libc++abi.a").exists() {
+            // No WASI SDK is available, so use the libraries from the prebuilt
+            // archive.
+            println!("cargo:rustc-link-search=native={}", cxx_dir.display());
+        }
+        println!("cargo:rustc-link-lib=static=c++");
+        println!("cargo:rustc-link-lib=static=c++abi");
+    } else if !target.contains("windows") {
         println!("cargo:rustc-link-lib=stdc++")
-    }
-
-    if target.contains("wasi") {
-        println!("cargo:rustc-link-lib=wasi-emulated-getpid");
     }
 }
 
@@ -613,10 +759,19 @@ fn get_common_cc(build_dir: &Path, target: BuildTarget) -> cc::Build {
             .define("JS_DEBUG", None);
 
         if !target_triple.contains("windows") {
-            builder.debug(true);
+            // Consumers of prebuilt debug archives need the debug assertions,
+            // not the ability to debug SpiderMonkey itself, so those archives
+            // are compiled optimized and without debug info. The post-build
+            // strip step retains the symbol table, so stack traces stay
+            // readable.
+            if env::var_os("MOZJS_CREATE_ARCHIVE").is_some() {
+                builder.opt_level(3).debug(false);
+            } else {
+                builder.debug(true);
+            }
         }
-    } else if target.contains("wasi") {
-        flags.push("-flto=thin");
+    } else if target_triple.contains("wasi") {
+        builder.flag("-flto=thin");
     }
 
     if get_cc_rs_env_os("CXXSTDLIB").is_none() {
@@ -1037,6 +1192,57 @@ mod archive {
         Some(current)
     }
 
+    /// Returns a stable cache directory for downloaded and extracted archives.
+    ///
+    /// Uses `$CARGO_HOME/mozjs/v{version}/` so that each mozjs-sys version
+    /// gets its own cache subdirectory, and version bumps naturally invalidate
+    /// stale caches.
+    fn cache_dir() -> PathBuf {
+        let cargo_home = env::var_os("CARGO_HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                let home = env::var_os("HOME")
+                    .or_else(|| env::var_os("USERPROFILE"))
+                    .expect("Neither CARGO_HOME, HOME, nor USERPROFILE is set");
+                PathBuf::from(home).join(".cargo")
+            });
+        let version = env::var("CARGO_PKG_VERSION").unwrap();
+        cargo_home.join("mozjs").join(format!("v{version}"))
+    }
+
+    /// Decompress the archive into a stable cache directory and return its path.
+    ///
+    /// Extracts to `$CARGO_HOME/mozjs/v{version}/{archive_stem}/` so that
+    /// repeated builds with different `OUT_DIR` hashes reuse the same
+    /// extraction. The caller can point link/include directives at the
+    /// returned path directly.
+    pub(crate) fn decompress_static_lib(archive_path: &Path) -> Result<PathBuf, std::io::Error> {
+        // Determine the extraction cache path based on the archive filename.
+        let archive_name = archive_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown");
+        let extract_name = archive_name.strip_suffix(".tar.gz").unwrap_or(archive_name);
+        let extract_cache = cache_dir().join(extract_name);
+        let marker = extract_cache.join(".complete");
+
+        if !marker.exists() {
+            // Clean up any partial extraction from a previous interrupted build.
+            let _ = fs::remove_dir_all(&extract_cache);
+            fs::create_dir_all(&extract_cache)?;
+
+            let tar_gz = File::open(archive_path)?;
+            let tar = GzDecoder::new(tar_gz);
+            let mut archive = Archive::new(tar);
+            archive.unpack(&extract_cache)?;
+
+            // Mark extraction complete so we skip it on subsequent builds.
+            File::create(&marker)?;
+        }
+
+        Ok(extract_cache)
+    }
+
     /// Compress spidermonkey build into a tarball with necessary static binaries and bindgen wrappers.
     pub(crate) fn compress_static_lib(build_dir: &Path) -> Result<(), std::io::Error> {
         let target = env::var("TARGET").unwrap();
@@ -1044,6 +1250,9 @@ mod archive {
         let tar_gz = File::create(format!("{}/{}", target_dir, archive()))?;
         let enc = GzEncoder::new(tar_gz, Compression::default());
         let mut tar = tar::Builder::new(enc);
+
+        // Bundle the dist/include directory for C++ consumers.
+        tar.append_dir_all("include", join_path(build_dir, "dist/include"))?;
 
         if target.contains("windows") {
             // This is the static library of spidermonkey.
@@ -1071,18 +1280,41 @@ mod archive {
                 &mut File::open(join_path(build_dir, "gluebindings.rs"))?,
             )?;
         } else {
-            if env::var_os("CARGO_FEATURE_DEBUGMOZJS").is_none() {
-                let strip_bin = get_cc_rs_env_os("STRIP").unwrap_or_else(|| "strip".into());
-                // Strip symbols from the static binary since it could bump up to 1.6GB on Linux.
-                // TODO: Maybe we could separate symbols for those who still want the debug ability.
-                // https://github.com/GabrielMajeri/separate-symbols
-                let mut strip = Command::new(strip_bin);
-                if !target.contains("apple") {
+            // Strip debug info from all static libraries before archiving
+            // for debug builds. Release builds for WASI are built with
+            // `--lto=thin` and contain LLVM bitcode, for which debug symbols
+            // can't be stripped.
+            let strip_libs: Vec<PathBuf> = if target.contains("wasi") {
+                if env::var_os("CARGO_FEATURE_DEBUGMOZJS").is_some() {
+                    // jsapi/jsglue are compiled with -g0 (cc_flags), so only
+                    // libjs_static.a contains debug info that needs stripping.
+                    vec![join_path(build_dir, "js/src/build/libjs_static.a")]
+                } else {
+                    vec![]
+                }
+            } else {
+                vec![
+                    join_path(build_dir, "js/src/build/libjs_static.a"),
+                    join_path(build_dir, "libjsapi.a"),
+                    join_path(build_dir, "libjsglue.a"),
+                ]
+            };
+            // Use WASI-SDK's llvm-strip for WASI targets, and host strip for native targets.
+            let strip_bin: std::ffi::OsString = if target.contains("wasi") {
+                super::wasi_sdk()
+                    .map(|sdk| PathBuf::from(sdk).join("bin/llvm-strip").into_os_string())
+                    .unwrap_or_else(|| "llvm-strip".into())
+            } else {
+                get_cc_rs_env_os("STRIP").unwrap_or_else(|| "strip".into())
+            };
+            for lib in &strip_libs {
+                let mut strip = Command::new(&strip_bin);
+                if target.contains("apple") {
+                    strip.arg("-S");
+                } else {
                     strip.arg("--strip-debug");
-                };
-                let status = strip
-                    .arg(join_path(build_dir, "js/src/build/libjs_static.a"))
-                    .status()?;
+                }
+                let status = strip.arg(lib).status()?;
                 assert!(status.success());
             }
 
@@ -1112,6 +1344,18 @@ mod archive {
             )?;
         }
 
+        // Include wasi-cxx-libs for WASI targets so downstream consumers
+        // don't need a WASI SDK installation just to link.
+        if target.contains("wasi") {
+            let cxx_dir = build_dir.join("wasi-cxx-libs");
+            for lib in &["libc++.a", "libc++abi.a"] {
+                let src = cxx_dir.join(lib);
+                if src.exists() {
+                    tar.append_file(format!("wasi-cxx-libs/{lib}"), &mut File::open(&src)?)?;
+                }
+            }
+        }
+
         Ok(())
     }
 
@@ -1125,24 +1369,6 @@ mod archive {
             "".to_string()
         };
         format!("libmozjs-{target}{features}.tar.gz")
-    }
-
-    /// Decompress the archive of spidermonkey build to build directory.
-    pub(crate) fn decompress_static_lib(
-        archive: &Path,
-        build_dir: &Path,
-    ) -> Result<(), std::io::Error> {
-        // Try to open the archive from provided path. If it doesn't exist, try to open it as relative
-        // path from workspace.
-        let tar_gz = File::open(archive).unwrap_or({
-            let mut workspace_dir = get_cargo_target_dir(build_dir).unwrap().to_path_buf();
-            workspace_dir.pop();
-            File::open(workspace_dir.join(archive))?
-        });
-        let tar = GzDecoder::new(tar_gz);
-        let mut archive = Archive::new(tar);
-        archive.unpack(build_dir)?;
-        Ok(())
     }
 
     static ATTESTATION_AVAILABLE: LazyLock<bool> = LazyLock::new(|| {
@@ -1205,6 +1431,38 @@ mod archive {
         }
     }
 
+    /// Returns the GitHub repository slug (e.g. `servo/mozjs`) to use for
+    /// downloading archives and verifying attestations.
+    ///
+    /// Resolution order:
+    /// 1. `MOZJS_REPO` environment variable (explicit override)
+    /// 2. `CARGO_PKG_REPOSITORY` (baked into the crate at publish time, or
+    ///    inherited from the workspace `Cargo.toml` for git dependencies)
+    /// 3. Falls back to `servo/mozjs`
+    fn repo_slug() -> String {
+        if let Ok(repo) = env::var("MOZJS_REPO") {
+            return repo;
+        }
+
+        // Try to extract "owner/repo" from CARGO_PKG_REPOSITORY, which is set
+        // by Cargo from the `repository` field in Cargo.toml. This is baked in
+        // at publish time for crates.io, and comes from the fork's Cargo.toml
+        // for git dependencies.
+        if let Ok(url) = env::var("CARGO_PKG_REPOSITORY") {
+            // Handle URLs like "https://github.com/owner/repo" or
+            // "https://github.com/owner/repo/" with optional trailing slash.
+            if let Some(path) = url.strip_prefix("https://github.com/") {
+                let path = path.trim_end_matches('/');
+                // Validate it looks like "owner/repo" (exactly one slash).
+                if path.contains('/') && path.matches('/').count() == 1 && !path.starts_with('/') {
+                    return path.to_string();
+                }
+            }
+        }
+
+        "servo/mozjs".to_string()
+    }
+
     /// Use GitHub artifact attestation to verify the artifact is not corrupt.
     fn attest_artifact(kind: AttestationType, archive_path: &Path) -> Result<(), std::io::Error> {
         let start = Instant::now();
@@ -1221,7 +1479,7 @@ mod archive {
             .arg("verify")
             .arg(&archive_path)
             .arg("-R")
-            .arg("servo/mozjs");
+            .arg(repo_slug());
 
         let attestation_duration = start.elapsed();
         eprintln!(
@@ -1245,35 +1503,57 @@ mod archive {
         Ok(())
     }
 
-    /// Download the SpiderMonkey archive with cURL using the provided base URL. If it's None,
-    /// it will use `servo/mozjs`'s release page as the base URL.
-    pub(crate) fn download_archive(base: Option<&str>) -> Result<PathBuf, std::io::Error> {
-        let base = base.unwrap_or("https://github.com/servo/mozjs/releases");
-        let version = env::var("CARGO_PKG_VERSION").unwrap();
-        let archive_path = PathBuf::from(env::var_os("OUT_DIR").unwrap()).join(&archive());
+    fn curl_download(url: &str, dest: &Path) -> Result<(), std::io::Error> {
+        eprintln!("Downloading prebuilt mozjs static library from {url}");
+        let start = Instant::now();
+        if !Command::new("curl")
+            .args(["-L", "-f", "-s", "-o"])
+            .arg(dest)
+            .arg(url)
+            .status()?
+            .success()
+        {
+            let _ = fs::remove_file(dest);
+            return Err(std::io::Error::from(std::io::ErrorKind::NotFound));
+        }
+        eprintln!("Download finished in {} ms", start.elapsed().as_millis());
+        Ok(())
+    }
+
+    /// Download a specific URL with cURL to the cache directory.
+    ///
+    /// The filename is taken from the last path component of the URL.
+    pub(crate) fn download_url(url: &str) -> Result<PathBuf, std::io::Error> {
+        let filename = url.rsplit('/').next().unwrap_or("archive.tar.gz");
+        let cache = cache_dir();
+        fs::create_dir_all(&cache)?;
+        let archive_path = cache.join(filename);
 
         if !archive_path.exists() {
-            eprintln!("Trying to download prebuilt mozjs static library from Github Releases");
-            let curl_start = Instant::now();
-            if !Command::new("curl")
-                .arg("-L")
-                .arg("-f")
-                .arg("-s")
-                .arg("-o")
-                .arg(&archive_path)
-                .arg(format!(
-                    "{base}/download/mozjs-sys-v{version}/{}",
-                    archive()
-                ))
-                .status()?
-                .success()
-            {
-                return Err(std::io::Error::from(std::io::ErrorKind::NotFound));
-            }
-            eprintln!(
-                "Successfully downloaded mozjs archive in {} ms",
-                curl_start.elapsed().as_millis()
-            );
+            curl_download(url, &archive_path)?;
+        }
+
+        Ok(archive_path)
+    }
+
+    /// Download the SpiderMonkey archive with cURL using the provided base URL. If it's None,
+    /// it will use the release page of the repository specified by `MOZJS_REPO` (defaulting
+    /// to `servo/mozjs`).
+    ///
+    /// The archive is downloaded to a stable cache directory under `$CARGO_HOME/mozjs/`
+    /// so that rebuilds with a different `OUT_DIR` hash don't re-download.
+    pub(crate) fn download_archive(base: Option<&str>) -> Result<PathBuf, std::io::Error> {
+        let default_base = format!("https://github.com/{}/releases", repo_slug());
+        let base = base.unwrap_or(&default_base);
+        let version = env::var("CARGO_PKG_VERSION").unwrap();
+
+        let cache = cache_dir();
+        fs::create_dir_all(&cache)?;
+        let archive_path = cache.join(&archive());
+
+        if !archive_path.exists() {
+            let url = format!("{base}/download/mozjs-sys-v{version}/{}", archive());
+            curl_download(&url, &archive_path)?;
             let attestation = ArtifactAttestation::from_env();
             if let ArtifactAttestation::Enabled(kind) = attestation {
                 attest_artifact(kind, &archive_path)?;

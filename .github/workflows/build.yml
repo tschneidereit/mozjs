@@ -6,7 +6,7 @@ on:
       rust_version:
         required: false
         # Keep the default in sync with `rust-toolchain.toml` and servo's MSRV!
-        default: "1.88.0"
+        default: "1.95.0"
         type: string
       verify_artifacts:
         required: false
@@ -19,6 +19,7 @@ env:
   CARGO_INCREMENTAL: 0
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
   MOZJS_CREATE_ARCHIVE: 1
+  MOZJS_REPO: ${{ github.repository }}
   NEW_RUST_CHECK: ${{ inputs.rust_version == 'stable' || inputs.rust_version == 'beta' }}
   # Increase this version to purge sccache cache on GitHub Actions
   SCCACHE_GHA_VERSION: 2
@@ -189,6 +190,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        features: ["debugmozjs", ""]
         target:
           [
             "armv7-linux-androideabi",
@@ -217,14 +219,16 @@ jobs:
       - name: Build
         env:
           ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
+          # The debugmozjs prebuilt archive is only published for OPT_LEVEL=3.
+          DEBUGMOZJS_OPT: ${{ matrix.features == 'debugmozjs' && '--config profile.dev.package.mozjs_sys.opt-level=3' || '' }}
         run: |
-          ./android-build cargo +${{ steps.toolchain.outputs.name }} build --target="${{ matrix.target }}"
+          ./android-build cargo +${{ steps.toolchain.outputs.name }} build --target="${{ matrix.target }}" --features "${{ matrix.features }}" ${{ env.DEBUGMOZJS_OPT }}
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         if: ${{ env.NEW_RUST_CHECK == 'false' }}
         with:
-          path: ./target/libmozjs-${{ matrix.target }}.tar.gz
-          name: libmozjs-${{ matrix.target }}.tar.gz
+          path: ./target/libmozjs-${{ matrix.target }}${{ matrix.features && '-debugmozjs-O3' || '' }}.tar.gz
+          name: libmozjs-${{ matrix.target }}${{ matrix.features && '-debugmozjs-O3' || '' }}.tar.gz
 
   ohos:
     name: "OpenHarmony"
@@ -255,24 +259,27 @@ jobs:
           # Use a prebuilt version of clang-19 for ohos, instead of the SDK,
           # since the SDK clang is too old.
           CARGO_OHOS_DOWNLOAD_PREBUILT: "19"
+          # The debugmozjs prebuilt archive is only published for OPT_LEVEL=3.
+          DEBUGMOZJS_OPT: ${{ matrix.features != '' && '--config profile.dev.package.mozjs_sys.opt-level=3' || '' }}
         run: |
-          cargo +${{ steps.toolchain.outputs.name }} ohos build  --target="${{ matrix.target }}" ${{ matrix.features }}
+          cargo +${{ steps.toolchain.outputs.name }} ohos build  --target="${{ matrix.target }}" ${{ matrix.features }} ${{ env.DEBUGMOZJS_OPT }}
       - name: Upload artifact
         uses: actions/upload-artifact@v7
-        if: ${{ env.NEW_RUST_CHECK == 'false' && matrix.features == '' }}
+        if: ${{ env.NEW_RUST_CHECK == 'false' }}
         with:
-          path: ./target/libmozjs-${{ matrix.target }}.tar.gz
-          name: libmozjs-${{ matrix.target }}.tar.gz
+          path: ./target/libmozjs-${{ matrix.target }}${{ matrix.features == '' && '' || '-debugmozjs-O3' }}.tar.gz
+          name: libmozjs-${{ matrix.target }}${{ matrix.features == '' && '' || '-debugmozjs-O3' }}.tar.gz
       - name: Test linking (build unit-tests)
         env: *build_ohos_env
-        run: cargo +${{ steps.toolchain.outputs.name }} ohos build --target="${{ matrix.target }}" ${{ matrix.features }} --tests
+        run: cargo +${{ steps.toolchain.outputs.name }} ohos build --target="${{ matrix.target }}" ${{ matrix.features }} ${{ env.DEBUGMOZJS_OPT }} --tests
 
   wasi:
-    name: wasm32-${{ matrix.target }}
+    name: wasm32-${{ matrix.target }}${{ matrix.features && ' (debugmozjs)' || '' }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
+        features: ["debugmozjs", ""]
         target:
           - wasip1
           - wasip2
@@ -287,34 +294,72 @@ jobs:
         uses: dtolnay/rust-toolchain@master
         id: toolchain
         with:
-          toolchain: "1.88.0"
+          toolchain: "1.95.0"
           targets: "wasm32-${{ matrix.target }}"
           components: "rustfmt"
       - uses: bytecodealliance/actions/wasmtime/setup@v1
       - name: Install WASI-SDK
         run: |
           cd /tmp
-          curl --retry 5 --retry-all-errors -OL https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-25/wasi-sdk-25.0-x86_64-linux.tar.gz
-          tar -xzf wasi-sdk-25.0-x86_64-linux.tar.gz
-          mv wasi-sdk-25.0-x86_64-linux wasi-sdk
+          curl --retry 5 --retry-all-errors -OL https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-33/wasi-sdk-33.0-x86_64-linux.tar.gz
+          tar -xzf wasi-sdk-33.0-x86_64-linux.tar.gz
+          mv wasi-sdk-33.0-x86_64-linux wasi-sdk
       - name: Build
         run: |
-          cargo +${{ steps.toolchain.outputs.name }} build --target=wasm32-${{ matrix.target }}
+          cargo +${{ steps.toolchain.outputs.name }} build --target=wasm32-${{ matrix.target }} --features "${{ matrix.features }}" ${{ env.DEBUGMOZJS_OPT }}
         env:
           WASI_SDK_PATH: "/tmp/wasi-sdk"
+          # The debugmozjs prebuilt archive is only published for OPT_LEVEL=3.
+          DEBUGMOZJS_OPT: ${{ matrix.features == 'debugmozjs' && '--config profile.dev.package.mozjs_sys.opt-level=3' || '' }}
       - name: Test
         run: |
           export CARGO_TARGET_WASM32_WASIP1_RUNNER="wasmtime run --dir=$PWD::/cwd"
           export CARGO_TARGET_WASM32_WASIP2_RUNNER="wasmtime run --dir=$PWD::/cwd"
-          cargo +${{ steps.toolchain.outputs.name }} test --tests --examples --target=wasm32-${{ matrix.target }}
+          cargo +${{ steps.toolchain.outputs.name }} test --tests --examples --target=wasm32-${{ matrix.target }} --features "${{ matrix.features }}" ${{ env.DEBUGMOZJS_OPT }}
         env:
           WASI_SDK_PATH: "/tmp/wasi-sdk"
+          # The debugmozjs prebuilt archive is only published for OPT_LEVEL=3.
+          DEBUGMOZJS_OPT: ${{ matrix.features == 'debugmozjs' && '--config profile.dev.package.mozjs_sys.opt-level=3' || '' }}
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         if: ${{ env.NEW_RUST_CHECK == 'false' }}
         with:
-          path: ./target/libmozjs-wasm32-${{ matrix.target }}.tar.gz
-          name: libmozjs-wasm32-${{ matrix.target }}.tar.gz
+          path: ./target/libmozjs-wasm32-${{ matrix.target }}${{ matrix.features && '-debugmozjs-O3' || '' }}.tar.gz
+          name: libmozjs-wasm32-${{ matrix.target }}${{ matrix.features && '-debugmozjs-O3' || '' }}.tar.gz
+
+  linux-cross-compile:
+    name: linux (${{ matrix.target }}${{ matrix.features && ', debugmozjs' || '' }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        features: ["debugmozjs", ""]
+        target:
+          - aarch64-unknown-linux-gnu
+          - armv7-unknown-linux-gnueabihf
+    container: ghcr.io/servo/cross-${{ matrix.target }}:main
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        id: toolchain
+        with:
+          toolchain: ${{ inputs.rust_version }}
+          targets: ${{ matrix.target }}
+          components: "rustfmt"
+      - name: Build
+        env:
+          # The debugmozjs prebuilt archive is only published for OPT_LEVEL=3.
+          DEBUGMOZJS_OPT: ${{ matrix.features == 'debugmozjs' && '--config profile.dev.package.mozjs_sys.opt-level=3' || '' }}
+        run: |
+          cargo +${{ steps.toolchain.outputs.name }} build --verbose --target ${{ matrix.target }} --features "${{ matrix.features }}" ${{ env.DEBUGMOZJS_OPT }}
+          cargo +${{ steps.toolchain.outputs.name }} test --tests --examples --target ${{ matrix.target }} --features "${{ matrix.features }}" ${{ env.DEBUGMOZJS_OPT }}
+      - name: Upload artifact
+        if: ${{ env.NEW_RUST_CHECK == 'false' }}
+        uses: actions/upload-artifact@v7
+        with:
+          path: ./target/libmozjs-${{ matrix.target }}${{ matrix.features && '-debugmozjs-O3' || '' }}.tar.gz
+          name: libmozjs-${{ matrix.target }}${{ matrix.features && '-debugmozjs-O3' || '' }}.tar.gz
 
   integrity:
     runs-on: ubuntu-latest
@@ -389,7 +434,7 @@ jobs:
 
   verify-release-artifacts:
     name: Verify release artifacts
-    needs: ["android", "linux", "mac", "ohos", "windows"]
+    needs: ["android", "linux", "mac", "ohos", "wasi", "windows"]
     if: ${{  inputs.verify_artifacts && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') }}
     uses: ./.github/workflows/release-check.yml
     with:
@@ -405,6 +450,7 @@ jobs:
         "linux",
         "mac",
         "ohos",
+        "wasi",
         "windows",
         "integrity",
         "verify-release-artifacts",
