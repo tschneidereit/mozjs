@@ -283,27 +283,30 @@ jobs:
         target:
           - wasip1
           - wasip2
+          - wasip3
     steps:
       - uses: actions/checkout@v6
       # host compiler needs to be new enough
       - name: Install LLVM and Clang
         uses: KyleMayes/install-llvm-action@v2
         with:
-          version: "20.1"
+          version: "21.1"
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         id: toolchain
         with:
-          toolchain: "1.95.0"
+          # wasm32-wasip3 is tier 2 on nightly but has not reached a stable
+          # release yet.
+          toolchain: ${{ matrix.target == 'wasip3' && 'nightly' || '1.95.0' }}
           targets: "wasm32-${{ matrix.target }}"
           components: "rustfmt"
       - uses: bytecodealliance/actions/wasmtime/setup@v1
       - name: Install WASI-SDK
         run: |
           cd /tmp
-          curl --retry 5 --retry-all-errors -OL https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-33/wasi-sdk-33.0-x86_64-linux.tar.gz
-          tar -xzf wasi-sdk-33.0-x86_64-linux.tar.gz
-          mv wasi-sdk-33.0-x86_64-linux wasi-sdk
+          curl --retry 5 --retry-all-errors -OL https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-34/wasi-sdk-34.0-x86_64-linux.tar.gz
+          tar -xzf wasi-sdk-34.0-x86_64-linux.tar.gz
+          mv wasi-sdk-34.0-x86_64-linux wasi-sdk
       - name: Build
         run: |
           cargo +${{ steps.toolchain.outputs.name }} build --target=wasm32-${{ matrix.target }} --features "${{ matrix.features }}" ${{ env.DEBUGMOZJS_OPT }}
@@ -315,6 +318,7 @@ jobs:
         run: |
           export CARGO_TARGET_WASM32_WASIP1_RUNNER="wasmtime run --dir=$PWD::/cwd"
           export CARGO_TARGET_WASM32_WASIP2_RUNNER="wasmtime run --dir=$PWD::/cwd"
+          export CARGO_TARGET_WASM32_WASIP3_RUNNER="wasmtime run --dir=$PWD::/cwd"
           cargo +${{ steps.toolchain.outputs.name }} test --tests --examples --target=wasm32-${{ matrix.target }} --features "${{ matrix.features }}" ${{ env.DEBUGMOZJS_OPT }}
         env:
           WASI_SDK_PATH: "/tmp/wasi-sdk"

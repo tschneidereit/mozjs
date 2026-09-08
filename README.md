@@ -118,6 +118,60 @@ cargo build --features debugmozjs
 cargo test --features debugmozjs
 ```
 
+### WebAssembly (WASI)
+
+`mozjs` builds for `wasm32-wasip1`, `wasm32-wasip2`, and `wasm32-wasip3`. All three
+need the [WASI SDK](https://github.com/WebAssembly/wasi-sdk), with `WASI_SDK_PATH`
+pointing at it. `wasm32-wasip3` needs WASI SDK 34 or later, which is the first
+release to ship a `wasm32-wasip3` sysroot.
+
+```sh
+export WASI_SDK_PATH=/opt/wasi-sdk
+cargo build --target wasm32-wasip2
+```
+
+`wasm32-wasip3` is a tier 2 Rust target on nightly that has not reached a stable
+release yet, so it needs a nightly toolchain:
+
+```sh
+rustup target add wasm32-wasip3 --toolchain nightly
+cargo +nightly build --target wasm32-wasip3
+```
+
+The prebuilt archives published by CI cover `wasm32-wasip3` too, but an archive only
+replaces the SpiderMonkey build. The nightly toolchain is still required for the Rust
+side.
+
+SpiderMonkey is configured single-threaded on every WASI target: no JIT, the portable
+baseline interpreter, and `--disable-shared-memory`.
+
+#### Position-independent code
+
+A Rust embedding of `mozjs` can be linked into a WebAssembly shared library on
+`wasm32-wasip2` and `wasm32-wasip3`. SpiderMonkey and the bindgen glue are compiled
+`-fPIC` already, and the `wasm32-wasip3` `std` rustup ships is position-independent
+too, so the only extra requirement is to build the crate graph with the PIC
+relocation model. Give the embedding crate `crate-type = ["staticlib"]` and build it
+with:
+
+```sh
+RUSTFLAGS="-C relocation-model=pic" \
+  cargo +nightly build --target wasm32-wasip3 --release
+```
+
+Then link the resulting archive into a shared object with the WASI SDK's `clang`:
+
+```sh
+"$WASI_SDK_PATH/bin/clang" --target=wasm32-wasip3 -shared -o libembedding.so \
+  -Wl,--whole-archive libembedding.a -Wl,--no-whole-archive \
+  -lwasi-emulated-getpid
+```
+
+Code generated for `wasm32-wasip3` calls `__wasm_get_stack_pointer` and
+`__wasm_set_stack_pointer`, which the linker turns into `env` imports of the shared
+library. Dropping the reactor crt object with `-nostartfiles` makes them link errors
+instead, so a link that does so has to add `-Wl,--import-undefined`.
+
 ### The `debugmozjs` feature and prebuilt archives
 
 The `debugmozjs` feature enables SpiderMonkey assertions and GC zeal (to help find GC issues).

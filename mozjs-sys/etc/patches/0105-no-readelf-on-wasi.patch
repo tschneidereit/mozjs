@@ -1,0 +1,24 @@
+From: Till Schneidereit <till@tillschneidereit.net>
+Subject: [PATCH] Don't require readelf when targeting WASI
+
+readelf is only used to inspect ELF binaries, which a WASI build never
+produces. wasi-sdk doesn't ship llvm-readelf, so requiring it makes the build
+fail on hosts that have no other readelf.
+---
+diff --git a/moz.configure b/moz.configure
+index 0cd93dc..f76b41d 100755
+--- a/moz.configure
++++ b/moz.configure
+@@ -384,8 +384,11 @@ def validate_readelf(path):
+ 
+ @depends("--enable-compile-environment", target, host)
+ def readelf_when(compile_env, target, host):
++    # readelf is only used to inspect ELF binaries, which a WASI build never
++    # produces. wasi-sdk doesn't ship llvm-readelf, so requiring it would make
++    # the build fail on hosts that have no other readelf.
+     return compile_env and any(
+-        x.kernel not in ("Darwin", "WINNT") for x in (target, host)
++        x.kernel not in ("Darwin", "WINNT", "WASI") for x in (target, host)
+     )
+ 
+ 

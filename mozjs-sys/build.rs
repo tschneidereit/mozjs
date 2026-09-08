@@ -509,6 +509,13 @@ fn build_bindings(build_dir: &Path, target: BuildTarget) {
         );
     }
 
+    // libc++ from LLVM 23 defines `std::aligned_union` in terms of a recursive
+    // union template, which makes bindgen panic (rust-lang/rust-bindgen#3397).
+    // Defining the include guard of the header that declares it drops it from
+    // the parse. Only `<type_traits>` includes that header, and no generated
+    // binding refers to the type.
+    builder = builder.clang_arg("-D_LIBCPP___TYPE_TRAITS_ALIGNED_UNION_H");
+
     if env::var("TARGET").unwrap().contains("wasi") {
         let target = env::var("TARGET").unwrap();
         builder = builder
@@ -580,9 +587,23 @@ fn build_bindings(build_dir: &Path, target: BuildTarget) {
 
     let bindings = builder.generate().expect("Should generate bindings OK");
 
+    let out = build_dir.join(target.output_bindings());
     bindings
-        .write_to_file(build_dir.join(target.output_bindings()))
+        .write_to_file(&out)
         .expect("Should write bindings to file OK");
+
+    // bindgen prefixes every C++-mangled `link_name` with `\u{1}`, LLVM's
+    // no-mangle escape, so rustc adds no platform decoration such as the
+    // leading underscore on Darwin. wasm has no such decoration, and the
+    // escape prevents ThinLTO from matching the Rust declaration
+    // (`\01_Z...`) to the C++ definition (`_Z...`) it imports, so no
+    // cross-language inlining happens. Dropping it on wasm targets makes the
+    // names identical at the IR level.
+    if env::var("TARGET").unwrap().starts_with("wasm32") {
+        let text = fs::read_to_string(&out).expect("Should read bindings back");
+        fs::write(&out, text.replace("link_name = \"\\u{1}", "link_name = \""))
+            .expect("Should rewrite bindings");
+    }
 }
 
 fn link_static_lib_binaries(build_dir: &Path) {
@@ -728,17 +749,10 @@ fn get_common_cc(build_dir: &Path, target: BuildTarget) -> cc::Build {
         }
 
         if target_triple.contains("wasi") {
-            // Unconditionally target p1 for now. Even if the application
-            // targets p2, an adapter will take care of it.
-            // TODO: This looks wierd to me. As part of the cc-rs migration,
-            // we'll stick with using the raw `.flag` instead of `.target()` for
-            // now, since using `.target()` would have other side-effects too,
-            // like looking at other `<VAR>_<target>` variables (if the cargo target
-            // doesn't match `-wasip1`).
-            // Someone familiar with wasi should look into this.
-            builder
-                .flag("--target=wasm32-wasip1")
-                .flag_if_supported("-fvisibility=default");
+            // Undo the hidden visibility that `gcc_hidden.h` pushes globally,
+            // so the glue symbols stay visible to the linker. `cc` derives the
+            // `--target` flag from `TARGET` on its own.
+            builder.flag_if_supported("-fvisibility=default");
         }
     }
 
@@ -770,8 +784,6 @@ fn get_common_cc(build_dir: &Path, target: BuildTarget) -> cc::Build {
                 builder.debug(true);
             }
         }
-    } else if target_triple.contains("wasi") {
-        builder.flag("-flto=thin");
     }
 
     if get_cc_rs_env_os("CXXSTDLIB").is_none() {
@@ -785,6 +797,14 @@ fn get_common_cc(build_dir: &Path, target: BuildTarget) -> cc::Build {
 
     if target_triple.contains("wasi") {
         builder.define("_WASI_EMULATED_GETPID", None);
+
+        // LTO is off by default here, but can be enabled by defining
+        // `MOZJS_CROSS_LTO=1`. Requires a wasi-sdk on the same LLVM major as
+        // rust-lld.
+        println!("cargo:rerun-if-env-changed=MOZJS_CROSS_LTO");
+        if env::var_os("MOZJS_CROSS_LTO").is_some() {
+            builder.flag("-flto=thin");
+        }
     }
 
     builder

@@ -207,6 +207,7 @@ jobs:
         target:
           - wasip1
           - wasip2
+          - wasip3
     env:
       RELEASE_TAG: ${{ github.event_name == 'release' && github.ref_name ||  inputs.release-tag }}
     steps:
@@ -215,14 +216,16 @@ jobs:
         uses: dtolnay/rust-toolchain@master
         id: toolchain
         with:
-          toolchain: ${{ env.RUST_TOOLCHAIN_INPUT }}
+          # wasm32-wasip3 is tier 2 on nightly but has not reached a stable
+          # release yet, so needs nightly.
+          toolchain: ${{ matrix.target == 'wasip3' && 'nightly' || env.RUST_TOOLCHAIN_INPUT }}
           targets: "wasm32-${{ matrix.target }}"
       - name: Install WASI-SDK
         run: |
           cd /tmp
-          curl --retry 5 --retry-all-errors -OL https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-25/wasi-sdk-25.0-x86_64-linux.tar.gz
-          tar -xzf wasi-sdk-25.0-x86_64-linux.tar.gz
-          mv wasi-sdk-25.0-x86_64-linux wasi-sdk
+          curl --retry 5 --retry-all-errors -OL https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-34/wasi-sdk-34.0-x86_64-linux.tar.gz
+          tar -xzf wasi-sdk-34.0-x86_64-linux.tar.gz
+          mv wasi-sdk-34.0-x86_64-linux wasi-sdk
       - name: Download prebuilt mozjs from artifact
         if: ${{ env.RELEASE_TAG == '' }}
         uses: actions/download-artifact@v4

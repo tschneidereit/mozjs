@@ -113,8 +113,8 @@ ifneq ($(HOST),$(TARGET))
         # Disable libc++ visibility annotations to avoid conflicts with
         # SpiderMonkey's `gcc_hidden.h` (which pushes hidden visibility globally),
         # which became a hard error in clang 22 (wasi-sdk 32+).
-        # Note: We currently don't support shared library builds on wasm32,
-		# so this workaround is okay for now.
+        # Note: libc++ is linked statically and the FFI surface is `extern "C"`,
+        # so no libc++ symbol has to resolve across a module boundary.
         CXXFLAGS += -D_LIBCPP_DISABLE_VISIBILITY_ANNOTATIONS
         CONFIGURE_FLAGS += \
             --enable-portable-baseline-interp \
