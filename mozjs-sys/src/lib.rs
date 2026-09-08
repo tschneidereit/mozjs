@@ -3,8 +3,6 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #![allow(unused_extern_crates)]
-#![cfg_attr(feature = "crown", feature(register_tool))]
-#![cfg_attr(feature = "crown", register_tool(crown))]
 #![cfg_attr(feature = "oom_with_hook", feature(alloc_error_hook))]
 
 // These extern crates are needed for linking

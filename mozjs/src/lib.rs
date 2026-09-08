@@ -10,8 +10,6 @@
     non_snake_case,
     improper_ctypes
 )]
-#![cfg_attr(feature = "crown", feature(register_tool))]
-#![cfg_attr(feature = "crown", register_tool(crown))]
 
 //!
 //! This crate contains Rust bindings to the [SpiderMonkey Javascript engine][1]

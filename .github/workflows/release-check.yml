@@ -68,6 +68,8 @@ jobs:
   verify-archive-android:
     name: "Verify archive Android${{ matrix.features && ' (debugmozjs)' || '' }}"
     runs-on: ubuntu-latest
+    # Not built for this fork.
+    if: false
     strategy:
       matrix:
         features: ["debugmozjs", ""]
@@ -117,6 +119,8 @@ jobs:
   verify-archive-ohos:
     name: "Verify archive OpenHarmony${{ matrix.features && ' (debugmozjs)' || '' }}"
     runs-on: ubuntu-latest
+    # Not built for this fork.
+    if: false
     strategy:
       matrix:
         features: ["debugmozjs", ""]
@@ -159,6 +163,8 @@ jobs:
   verify-archive-linux-cross:
     name: "Verify archive linux (${{ matrix.target }}${{ matrix.features && ', debugmozjs' || '' }})"
     runs-on: ubuntu-latest
+    # Not built for this fork.
+    if: false
     strategy:
       fail-fast: false
       matrix:
