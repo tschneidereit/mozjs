@@ -9,6 +9,11 @@
 
 #include "js-config.h"
 
+#ifdef JS_HAS_INTL_API
+#  include "unicode/udata.h"
+#  include "unicode/utypes.h"
+#endif
+
 #ifdef JS_DEBUG
 // A hack for MFBT. Guard objects need this to work.
 #  define DEBUG 1
@@ -606,6 +611,20 @@ bool ShouldMeasureObject(JSObject* obj, nsISupports** iface) {
 }
 
 extern "C" {
+
+#ifdef JS_HAS_INTL_API
+// Registers the ICU common data package. ICU keeps the pointer, so the bytes
+// must outlive the process's use of ICU and stay 16-byte aligned. Call before
+// anything reads ICU data, which in practice means before `JS_Init`: ICU
+// searches registered packages ahead of the empty package linked in at
+// `U_ICUDATA_ENTRY_POINT`, but only for lookups made after registration.
+// Returns false if ICU rejects the package.
+bool SetICUCommonData(const void* data) {
+  UErrorCode status = U_ZERO_ERROR;
+  udata_setCommonData(data, &status);
+  return U_SUCCESS(status);
+}
+#endif
 
 #ifdef __wasi__
 // Adds nanoseconds to every subsequent monotonic clock reading. See

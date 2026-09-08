@@ -44,6 +44,9 @@ pub mod jsapi {
     pub use mozjs_sys::jsapi::*;
 }
 
+#[cfg(feature = "intl")]
+pub use mozjs_sys::icu;
+
 #[macro_use]
 pub mod rust;
 

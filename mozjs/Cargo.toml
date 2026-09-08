@@ -19,6 +19,8 @@ jitspew = ["mozjs_sys/jitspew"]
 libz-sys = ["mozjs_sys/libz-sys"]
 libz-rs = ["mozjs_sys/libz-rs"]
 intl = ["mozjs_sys/intl"]
+# Suppresses the ICU data embedded by default. See mozjs-sys.
+external-icu-data = ["mozjs_sys/external-icu-data"]
 crown = ["mozjs_sys/crown"]
 
 

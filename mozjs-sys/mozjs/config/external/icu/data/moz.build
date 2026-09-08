@@ -2,40 +2,21 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-# Build a library containing the ICU data for use in the JS shell, so that
-# JSAPI consumers don't have to deal with setting ICU's data path.
+# ICU resolves the symbol `U_ICUDATA_ENTRY_POINT` at link time and treats what
+# it finds as the common data package. This builds ICU's empty stub package
+# into that symbol. The real package is registered at runtime by
+# `SetICUCommonData` in jsglue.cpp, from the bytes in mozjs-sys/icu-data.
+# Registered data is searched before the stub, so the stub never satisfies a
+# lookup.
+#
+# The registered package is little-endian. A big-endian target would need a
+# byte-swapped blob, which the generator does not produce.
 Library("icudata")
 
-LOCAL_INCLUDES += ["."]
+include("../defs.mozbuild")
 
-prefix = ""
-if (CONFIG["OS_ARCH"] == "WINNT" and CONFIG["TARGET_CPU"] == "x86") or CONFIG[
-    "OS_ARCH"
-] == "Darwin":
-    prefix = "_"
+LOCAL_INCLUDES += ["/intl/icu/source/stubdata"]
 
-data_file = {
-    "little": "icudt%sl.dat" % CONFIG["MOZ_ICU_VERSION"],
-    "big": "icudt%sb.dat" % CONFIG["MOZ_ICU_VERSION"],
-}
-data_dir = {
-    "little": SRCDIR,
-    "big": OBJDIR,
-}
-endianness = CONFIG["TARGET_ENDIANNESS"] or "little"
-DEFINES["ICU_DATA_FILE"] = '"%s/%s"' % (data_dir[endianness], data_file[endianness])
-DEFINES["ICU_DATA_SYMBOL"] = "%sicudt%s_dat" % (prefix, CONFIG["MOZ_ICU_VERSION"])
 SOURCES += [
-    "icu_data.S",
+    "/intl/icu/source/stubdata/stubdata.cpp",
 ]
-
-if CONFIG["OS_ARCH"] == "WINNT" and CONFIG["CC_TYPE"] == "clang-cl":
-    USE_INTEGRATED_CLANGCL_AS = True
-    # Work around https://github.com/llvm/llvm-project/issues/92229
-    # We don't need debug flags on the command line for this file anyways.
-    ASM_FLAGS["DEBUG"] = []
-
-if CONFIG["TARGET_ENDIANNESS"] == "big":
-    GeneratedFile(
-        data_file["big"], script="convert_icudata.py", inputs=[data_file["little"]]
-    )

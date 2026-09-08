@@ -1,0 +1,47 @@
+# Locales kept in the minimized ICU4C package and the ICU4X blob.
+#
+# The 25 languages covering the largest share of internet users, plus regional
+# variants whose formatting differs from their parent. Ancestors are added
+# automatically, so `es` need not be listed for `es_419`. `root` is always kept.
+#
+# Anything not listed falls back to root.
+
+# Languages, in descending order of internet-user share.
+en
+zh_Hans
+zh
+es
+ar
+id
+pt
+fr
+ja
+ru
+de
+hi
+ko
+vi
+tr
+it
+bn
+fa
+th
+pl
+nl
+uk
+ur
+ta
+te
+
+# Regional variants that differ from their parent in date order, number
+# formatting, or script.
+en_GB
+en_AU
+en_CA
+en_IN
+zh_Hant
+es_419
+es_MX
+pt_PT
+fr_CA
+de_AT

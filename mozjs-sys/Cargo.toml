@@ -6,7 +6,15 @@ version = "153.0.0-1"
 authors = ["Mozilla", "The Servo Project Developers"]
 links = "mozjs"
 license.workspace = true
-exclude = ["__pycache__", "/etc/", "/mozjs/.cargo/"]
+exclude = [
+  "__pycache__",
+  "/etc/",
+  "/mozjs/.cargo/",
+  # The build compiles ICU's stub package and registers the filtered package in
+  # icu-data at runtime, so the 12.88 MB upstream one is only an input to
+  # icu-data/build_icu4c_data.py, which is run from a git checkout.
+  "/mozjs/config/external/icu/data/icudt78l.dat",
+]
 edition.workspace = true
 
 [lib]
@@ -22,6 +30,11 @@ jit = []
 jitspew = []
 libz-sys = ["dep:libz-sys"]
 libz-rs = ["dep:libz-rs-sys"]
+# Suppresses the ICU data embedded by default, leaving the embedder to supply it
+# with `mozjs_sys::icu::set_data`. Phrased as an opt-out because Cargo features
+# are additive: a default-on feature could only be turned off by disabling every
+# default and re-listing the rest.
+external-icu-data = []
 intl = [
   "dep:icu_capi",
   "dep:mozjs_unicode_bidi_ffi",

@@ -167,6 +167,10 @@ pub enum JSEngineError {
     AlreadyInitialized,
     AlreadyShutDown,
     InitFailed,
+    /// ICU had no usable data package. Call `mozjs::icu::set_data` before
+    /// `JSEngine::init`, or drop the `external-icu-data` feature.
+    #[cfg(feature = "intl")]
+    IcuData(mozjs_sys::icu::Error),
 }
 
 /// A handle that must be kept alive in order to create new Runtimes.
@@ -203,6 +207,14 @@ impl JSEngine {
             EngineState::InitFailed => return Err(JSEngineError::InitFailed),
             EngineState::ShutDown => return Err(JSEngineError::AlreadyShutDown),
             EngineState::Uninitialized => (),
+        }
+        // ICU reads its data through a package registered process-wide, and
+        // only lookups made after registration see it, so this precedes
+        // `JS_Init`.
+        #[cfg(feature = "intl")]
+        if let Err(error) = mozjs_sys::icu::install() {
+            *state = EngineState::InitFailed;
+            return Err(JSEngineError::IcuData(error));
         }
         if unsafe { !JS_Init() } {
             *state = EngineState::InitFailed;
