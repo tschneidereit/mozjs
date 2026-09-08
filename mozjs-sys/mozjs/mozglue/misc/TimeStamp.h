@@ -424,6 +424,20 @@ class TimeStamp {
    */
   static MFBT_API void RecordProcessRestart();
 
+#ifdef __wasi__
+  /**
+   * Add aNanoseconds to every subsequent monotonic clock reading.
+   *
+   * The monotonic clock is scoped to the Wasm instance and starts again at
+   * zero when an instance resumes from a snapshot, while timestamps taken
+   * before the snapshot are still in the heap. An embedder resuming a snapshot
+   * passes the reading it took when the snapshot was made, which places every
+   * subsequent reading after those timestamps. Calls accumulate, so a snapshot
+   * taken of a resumed instance can be resumed in turn.
+   */
+  static MFBT_API void AdvanceMonotonicClock(uint64_t aNanoseconds);
+#endif
+
 #ifdef XP_LINUX
   uint64_t RawClockMonotonicNanosecondsSinceBoot() const {
     return static_cast<uint64_t>(mValue);

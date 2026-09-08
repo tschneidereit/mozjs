@@ -37,6 +37,7 @@
 #include "jsapi.h"
 #include "jsfriendapi.h"
 #include "mozilla/PodOperations.h"
+#include "mozilla/TimeStamp.h"
 
 typedef bool (*WantToMeasure)(JSObject* obj);
 typedef size_t (*GetSize)(JSObject* obj);
@@ -605,6 +606,14 @@ bool ShouldMeasureObject(JSObject* obj, nsISupports** iface) {
 }
 
 extern "C" {
+
+#ifdef __wasi__
+// Adds nanoseconds to every subsequent monotonic clock reading. See
+// `mozilla::TimeStamp::AdvanceMonotonicClock`.
+void AdvanceMonotonicClock(uint64_t nanoseconds) {
+  mozilla::TimeStamp::AdvanceMonotonicClock(nanoseconds);
+}
+#endif
 
 JSPrincipals* CreateRustJSPrincipals(const JSPrincipalsCallbacks& callbacks,
                                      void* privateData) {

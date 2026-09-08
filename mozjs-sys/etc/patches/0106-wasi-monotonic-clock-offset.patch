@@ -1,0 +1,74 @@
+From: Till Schneidereit <till@tillschneidereit.net>
+Subject: [PATCH] WASI: allow advancing the monotonic clock by an offset
+
+The monotonic clock is scoped to the Wasm instance and starts again at zero
+when an instance resumes from a snapshot, while timestamps taken before the
+snapshot are still in the heap. TimeStamp::AdvanceMonotonicClock adds an
+offset to every subsequent reading, so that an embedder can place them after
+the timestamps the snapshot holds.
+---
+diff --git a/mozglue/misc/TimeStamp.h b/mozglue/misc/TimeStamp.h
+index ced0e9281..089f907ea 100644
+--- a/mozglue/misc/TimeStamp.h
++++ b/mozglue/misc/TimeStamp.h
+@@ -424,6 +424,20 @@ class TimeStamp {
+    */
+   static MFBT_API void RecordProcessRestart();
+ 
++#ifdef __wasi__
++  /**
++   * Add aNanoseconds to every subsequent monotonic clock reading.
++   *
++   * The monotonic clock is scoped to the Wasm instance and starts again at
++   * zero when an instance resumes from a snapshot, while timestamps taken
++   * before the snapshot are still in the heap. An embedder resuming a snapshot
++   * passes the reading it took when the snapshot was made, which places every
++   * subsequent reading after those timestamps. Calls accumulate, so a snapshot
++   * taken of a resumed instance can be resumed in turn.
++   */
++  static MFBT_API void AdvanceMonotonicClock(uint64_t aNanoseconds);
++#endif
++
+ #ifdef XP_LINUX
+   uint64_t RawClockMonotonicNanosecondsSinceBoot() const {
+     return static_cast<uint64_t>(mValue);
+diff --git a/mozglue/misc/TimeStamp_posix.cpp b/mozglue/misc/TimeStamp_posix.cpp
+index 57af26daa..bd8f97072 100644
+--- a/mozglue/misc/TimeStamp_posix.cpp
++++ b/mozglue/misc/TimeStamp_posix.cpp
+@@ -56,6 +56,10 @@
+ static bool sSupportsMonotonicCoarseClock = false;
+ #endif
+ 
++#ifdef __wasi__
++static uint64_t sMonotonicClockOffsetNs = 0;
++#endif
++
+ #if !defined(__wasi__)
+ static const uint16_t kNsPerUs = 1000;
+ #endif
+@@ -89,7 +93,11 @@ static uint64_t ClockTimeNs(const clockid_t aClockId = CLOCK_MONOTONIC) {
+   // bits, tv_sec won't overflow while the browser is open.  Revisit
+   // this argument if we're still building with 32-bit time_t around
+   // the year 2037.
++#ifdef __wasi__
++  return TimespecToNs(ts) + sMonotonicClockOffsetNs;
++#else
+   return TimespecToNs(ts);
++#endif
+ }
+ 
+ namespace mozilla {
+@@ -145,6 +153,12 @@ TimeStamp TimeStamp::Now(bool aHighResolution) {
+   return TimeStamp(ClockTimeNs(CLOCK_MONOTONIC));
+ }
+ 
++#ifdef __wasi__
++void TimeStamp::AdvanceMonotonicClock(uint64_t aNanoseconds) {
++  sMonotonicClockOffsetNs += aNanoseconds;
++}
++#endif
++
+ #if defined(XP_LINUX) || defined(ANDROID)
+ 
+ // Calculates the amount of jiffies that have elapsed since boot and up to the

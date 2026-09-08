@@ -56,6 +56,10 @@
 static bool sSupportsMonotonicCoarseClock = false;
 #endif
 
+#ifdef __wasi__
+static uint64_t sMonotonicClockOffsetNs = 0;
+#endif
+
 #if !defined(__wasi__)
 static const uint16_t kNsPerUs = 1000;
 #endif
@@ -89,7 +93,11 @@ static uint64_t ClockTimeNs(const clockid_t aClockId = CLOCK_MONOTONIC) {
   // bits, tv_sec won't overflow while the browser is open.  Revisit
   // this argument if we're still building with 32-bit time_t around
   // the year 2037.
+#ifdef __wasi__
+  return TimespecToNs(ts) + sMonotonicClockOffsetNs;
+#else
   return TimespecToNs(ts);
+#endif
 }
 
 namespace mozilla {
@@ -144,6 +152,12 @@ TimeStamp TimeStamp::Now(bool aHighResolution) {
 #endif
   return TimeStamp(ClockTimeNs(CLOCK_MONOTONIC));
 }
+
+#ifdef __wasi__
+void TimeStamp::AdvanceMonotonicClock(uint64_t aNanoseconds) {
+  sMonotonicClockOffsetNs += aNanoseconds;
+}
+#endif
 
 #if defined(XP_LINUX) || defined(ANDROID)
 
