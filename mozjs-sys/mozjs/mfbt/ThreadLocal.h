@@ -16,6 +16,10 @@
 
 #include "mozilla/Assertions.h"
 
+#if defined(__wasm__) && defined(__wasi__)
+#  include <wasi/version.h>
+#endif
+
 namespace mozilla {
 
 namespace detail {
@@ -238,6 +242,20 @@ inline void ThreadLocal<T, Storage>::set(const T aValue) {
 #  define MOZ_THREAD_LOCAL(TYPE)                 \
     thread_local ::mozilla::detail::ThreadLocal< \
         TYPE, ::mozilla::detail::ThreadLocalNativeStorage>
+#elif defined(__wasip3__) && !defined(__wasi_cooperative_threads__)
+// On WASIp3, each call to an export creates a new task and spawns a new coop-
+// thread. That means that if the JS runtime used TLS, we'd have to create a
+// new runtime each time an export is called, instead of being able to use the
+// same runtime and operating on an existing, initialized global.
+
+// Instead, we define `MOZ_THREAD_LOCAL` to be a static, so it's reachable from
+// all coop-threads. This means we can only ever have a single runtime per
+// instance, but that's an acceptable tradeoff for the target environment, in
+// particular given that embedders wanting to use multi-threading with multiple
+// runtimes can target the explicit coop-threaded WASIp3 target instead.
+#  define MOZ_THREAD_LOCAL(TYPE)         \
+    ::mozilla::detail::ThreadLocal<TYPE, \
+                                   ::mozilla::detail::ThreadLocalNativeStorage>
 #elif defined(HAVE_THREAD_TLS_KEYWORD) && !defined(MOZ_LINKER)
 #  define MOZ_THREAD_LOCAL(TYPE)             \
     __thread ::mozilla::detail::ThreadLocal< \

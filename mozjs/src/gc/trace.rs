@@ -27,12 +27,14 @@ pub struct RootedTraceableSet {
     set: Vec<*const dyn Traceable>,
 }
 
-thread_local!(
-    static ROOTED_TRACEABLES: RefCell<RootedTraceableSet>  = RefCell::new(RootedTraceableSet::new())
-);
+instance_local! {
+    /// The roots registered here have to be visible to a collection triggered from any call into
+    /// the runtime, which on wasm32-wasip3 is not the call that registered them.
+    static ROOTED_TRACEABLES: RefCell<RootedTraceableSet> = RefCell::new(RootedTraceableSet::new());
+}
 
 impl RootedTraceableSet {
-    fn new() -> RootedTraceableSet {
+    const fn new() -> RootedTraceableSet {
         RootedTraceableSet { set: Vec::new() }
     }
 

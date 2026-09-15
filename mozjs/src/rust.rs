@@ -150,7 +150,11 @@ impl Drop for RealmOptions {
     }
 }
 
-thread_local!(static CONTEXT: Cell<Option<NonNull<JSContext>>> = Cell::new(None));
+instance_local! {
+    /// Set when the `Runtime` is created and read by [`Runtime::get`], which on wasm32-wasip3 is
+    /// reached from calls other than the one that created it.
+    static CONTEXT: Cell<Option<NonNull<JSContext>>> = Cell::new(None);
+}
 
 #[derive(PartialEq)]
 enum EngineState {

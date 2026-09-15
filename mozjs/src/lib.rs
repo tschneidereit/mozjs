@@ -45,6 +45,9 @@ pub mod jsapi {
 pub use mozjs_sys::icu;
 
 #[macro_use]
+pub(crate) mod instance_local;
+
+#[macro_use]
 pub mod rust;
 
 pub mod cell;
