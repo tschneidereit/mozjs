@@ -1196,6 +1196,7 @@ mod archive {
     use flate2::write::GzEncoder;
     use flate2::Compression;
     use std::env::VarError;
+    use std::ffi::OsStr;
     use std::fs::File;
     use std::path::{Path, PathBuf};
     use std::process::Command;
@@ -1206,15 +1207,24 @@ mod archive {
 
     // Get cargo target directory. There's no env variable for build script yet.
     // See https://github.com/rust-lang/cargo/issues/9661 for more info.
+    //
+    // `build_dir` is `$OUT_DIR/build`. Cargo puts `$OUT_DIR` below the `build`
+    // directory of the profile directory, in one of two layouts:
+    // `build/{pkg}-{hash}/out` or `build/{pkg}/{hash}/out`. The profile
+    // directory is `{target dir}/{triple}/{profile}` when cross-compiling and
+    // `{target dir}/{profile}` otherwise.
     fn get_cargo_target_dir(build_dir: &Path) -> Option<&Path> {
-        let skip_triple = env::var_os("TARGET").unwrap() == env::var_os("HOST").unwrap();
-        let skip_parent_dirs = if skip_triple { 5 } else { 6 };
-        let mut current = build_dir;
-        for _ in 0..skip_parent_dirs {
-            current = current.parent()?;
+        let profile_dir = build_dir
+            .parent()?
+            .ancestors()
+            .find(|dir| dir.file_name() == Some(OsStr::new("build")))?
+            .parent()?;
+        let target_dir = profile_dir.parent()?;
+        if env::var_os("TARGET") == env::var_os("HOST") {
+            Some(target_dir)
+        } else {
+            target_dir.parent()
         }
-
-        Some(current)
     }
 
     /// Returns a stable cache directory for downloaded and extracted archives.

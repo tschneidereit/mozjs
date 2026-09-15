@@ -72,6 +72,7 @@ jobs:
         with:
           path: ./target/libmozjs-${{ matrix.platform.target }}${{ matrix.features && '-debugmozjs-O3' || '' }}.tar.gz
           name: libmozjs-${{ matrix.platform.target }}${{ matrix.features && '-debugmozjs-O3' || '' }}.tar.gz
+          if-no-files-found: error
 
   linux:
     env:
@@ -131,6 +132,7 @@ jobs:
         with:
           path: ./target/libmozjs-${{matrix.platform.target }}${{ matrix.features && '-debugmozjs-O3' || '' }}.tar.gz
           name: libmozjs-${{matrix.platform.target }}${{ matrix.features && '-debugmozjs-O3' || '' }}.tar.gz
+          if-no-files-found: error
 
   windows:
     runs-on: ${{ matrix.platform.os }}
@@ -184,6 +186,7 @@ jobs:
         with:
           path: ./target/${{ matrix.platform.target }}/libmozjs-${{ matrix.platform.target }}${{ matrix.features && '-debugmozjs-O3' || '' }}.tar.gz
           name: libmozjs-${{ matrix.platform.target }}${{ matrix.features && '-debugmozjs-O3' || '' }}.tar.gz
+          if-no-files-found: error
 
   android:
     runs-on: ubuntu-latest
@@ -231,6 +234,7 @@ jobs:
         with:
           path: ./target/libmozjs-${{ matrix.target }}${{ matrix.features && '-debugmozjs-O3' || '' }}.tar.gz
           name: libmozjs-${{ matrix.target }}${{ matrix.features && '-debugmozjs-O3' || '' }}.tar.gz
+          if-no-files-found: error
 
   ohos:
     name: "OpenHarmony"
@@ -273,6 +277,7 @@ jobs:
         with:
           path: ./target/libmozjs-${{ matrix.target }}${{ matrix.features == '' && '' || '-debugmozjs-O3' }}.tar.gz
           name: libmozjs-${{ matrix.target }}${{ matrix.features == '' && '' || '-debugmozjs-O3' }}.tar.gz
+          if-no-files-found: error
       - name: Test linking (build unit-tests)
         env: *build_ohos_env
         run: cargo +${{ steps.toolchain.outputs.name }} ohos build --target="${{ matrix.target }}" ${{ matrix.features }} ${{ env.DEBUGMOZJS_OPT }} --tests
@@ -334,6 +339,7 @@ jobs:
         with:
           path: ./target/libmozjs-wasm32-${{ matrix.target }}${{ matrix.features && '-debugmozjs-O3' || '' }}.tar.gz
           name: libmozjs-wasm32-${{ matrix.target }}${{ matrix.features && '-debugmozjs-O3' || '' }}.tar.gz
+          if-no-files-found: error
 
   linux-cross-compile:
     name: linux (${{ matrix.target }}${{ matrix.features && ', debugmozjs' || '' }})
@@ -370,6 +376,7 @@ jobs:
         with:
           path: ./target/libmozjs-${{ matrix.target }}${{ matrix.features && '-debugmozjs-O3' || '' }}.tar.gz
           name: libmozjs-${{ matrix.target }}${{ matrix.features && '-debugmozjs-O3' || '' }}.tar.gz
+          if-no-files-found: error
 
   integrity:
     runs-on: ubuntu-latest
