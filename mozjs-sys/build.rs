@@ -1318,18 +1318,12 @@ mod archive {
                 &mut File::open(join_path(build_dir, "gluebindings.rs"))?,
             )?;
         } else {
-            // Strip debug info from all static libraries before archiving
-            // for debug builds. Release builds for WASI are built with
-            // `--lto=thin` and contain LLVM bitcode, for which debug symbols
-            // can't be stripped.
+            // Strip debug info from the static libraries before archiving.
             let strip_libs: Vec<PathBuf> = if target.contains("wasi") {
-                if env::var_os("CARGO_FEATURE_DEBUGMOZJS").is_some() {
-                    // jsapi/jsglue are compiled with -g0 (cc_flags), so only
-                    // libjs_static.a contains debug info that needs stripping.
-                    vec![join_path(build_dir, "js/src/build/libjs_static.a")]
-                } else {
-                    vec![]
-                }
+                // jsapi/jsglue are compiled without debug info for archives
+                // (`get_common_cc`), and may be LLVM bitcode under
+                // `MOZJS_CROSS_LTO`, so only libjs_static.a needs stripping.
+                vec![join_path(build_dir, "js/src/build/libjs_static.a")]
             } else {
                 vec![
                     join_path(build_dir, "js/src/build/libjs_static.a"),
