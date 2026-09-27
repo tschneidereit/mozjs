@@ -291,9 +291,9 @@ pub unsafe extern "C" fn mozilla_collator_glue_collator_try_new(
     // `unwrap` is OK below, because `CollatorBorrowed::try_new`` never
     // fails with properly-generated baked data.
     // See https://github.com/unicode-org/icu4x/issues/6634
-    // `unwrap` is OK below: the blob is generated with the collation data this
-    // asks for, so a failure here means a mismatched blob, not a runtime
-    // condition.
+    // `unwrap` is OK below: a locale the blob does not hold falls back to the
+    // root locale, whose collation data the blob always holds, so a failure
+    // here means a mismatched blob, not a runtime condition.
     Box::into_raw(Box::new(
         Collator::try_new_with_buffer_provider(
             icu_provider_glue::provider(),
@@ -448,7 +448,7 @@ fn data_locales() -> impl Iterator<Item = (DataLocale, TinyAsciiStr<8>)> {
     use icu_provider::prelude::*;
     use icu_provider::IterableDynamicDataProvider;
 
-    let provider = icu_provider_glue::provider();
+    let provider = icu_provider_glue::blob();
     [
         CollationMetadataV1::INFO,
         CollationTailoringV1::INFO,

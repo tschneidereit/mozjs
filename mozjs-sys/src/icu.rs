@@ -69,7 +69,8 @@ pub enum Error {
     Misaligned,
     /// ICU rejected the ICU4C package.
     Rejected,
-    /// The ICU4X blob is not a postcard data blob.
+    /// The ICU4X blob is not a postcard data blob, or lacks the locale fallback
+    /// data.
     RejectedIcu4x,
 }
 
@@ -85,7 +86,9 @@ impl fmt::Display for Error {
             ),
             Error::Misaligned => f.write_str("the ICU4C package is not 16-byte aligned"),
             Error::Rejected => f.write_str("ICU rejected the ICU4C package"),
-            Error::RejectedIcu4x => f.write_str("the ICU4X blob is not a postcard data blob"),
+            Error::RejectedIcu4x => f.write_str(
+                "the ICU4X blob is not a postcard data blob, or lacks the locale fallback data",
+            ),
         }
     }
 }

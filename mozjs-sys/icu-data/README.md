@@ -102,6 +102,14 @@ The two blobs are split so that the Chinese and Japanese word dictionary, which
 is half the ICU4X data, is only present when the `segmenter-cjk` feature asks for
 it. The runtime merges them with `fork_by_marker`.
 
+The datagen deduplicates each locale's data against its parent, so the blob
+holds `en` but not `en-US`, whose data is identical. The glue crates read the
+blob through a `LocaleFallbackProvider` (`icu_provider_glue`), so a request for
+a locale the blob does not hold returns the data of the nearest ancestor it does
+hold, down to the root locale. That provider builds its fallbacker from the
+blob, so the `LocaleParentsV1` and `LocaleLikelySubtags*` markers must stay in
+`icu4x-markers.txt`.
+
 **This is not a reproducible toolchain the way the ICU4C side is.** It depends on
 a personal work-in-progress branch and a patch to a hardcoded path. An ICU4X
 update means checking whether the branch still applies, whether `NormalizerNfcV2`

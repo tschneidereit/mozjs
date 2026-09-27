@@ -1,0 +1,112 @@
+From: Till Schneidereit <till@tillschneidereit.net>
+Subject: [PATCH] Serve the ICU4X blob through locale fallback
+
+The blob is generated with its locales deduplicated against their parents, so
+a request for a locale it does not hold verbatim, such as en-US, has to fall
+back to the nearest ancestor it does hold. Wrap the blob provider in a
+LocaleFallbackProvider, and keep the bare blob for enumerating the collation
+locales, which the fallback provider does not support.
+---
+diff --git a/collator_glue/src/lib.rs b/collator_glue/src/lib.rs
+index eab2ca2fb..d97a8d043 100644
+--- a/collator_glue/src/lib.rs
++++ b/collator_glue/src/lib.rs
+@@ -291,9 +291,9 @@ pub unsafe extern "C" fn mozilla_collator_glue_collator_try_new(
+     // `unwrap` is OK below, because `CollatorBorrowed::try_new`` never
+     // fails with properly-generated baked data.
+     // See https://github.com/unicode-org/icu4x/issues/6634
+-    // `unwrap` is OK below: the blob is generated with the collation data this
+-    // asks for, so a failure here means a mismatched blob, not a runtime
+-    // condition.
++    // `unwrap` is OK below: a locale the blob does not hold falls back to the
++    // root locale, whose collation data the blob always holds, so a failure
++    // here means a mismatched blob, not a runtime condition.
+     Box::into_raw(Box::new(
+         Collator::try_new_with_buffer_provider(
+             icu_provider_glue::provider(),
+@@ -448,7 +448,7 @@ fn data_locales() -> impl Iterator<Item = (DataLocale, TinyAsciiStr<8>)> {
+     use icu_provider::prelude::*;
+     use icu_provider::IterableDynamicDataProvider;
+ 
+-    let provider = icu_provider_glue::provider();
++    let provider = icu_provider_glue::blob();
+     [
+         CollationMetadataV1::INFO,
+         CollationTailoringV1::INFO,
+diff --git a/icu_provider_glue/Cargo.toml b/icu_provider_glue/Cargo.toml
+index ef93cc34e..36de12809 100644
+--- a/icu_provider_glue/Cargo.toml
++++ b/icu_provider_glue/Cargo.toml
+@@ -16,3 +16,7 @@ icu_provider_blob = { version = "~2.1.1", features = ["alloc"] }
+ # what lets the provider live in a `static`. SpiderMonkey creates runtimes on
+ # more than one thread.
+ icu_provider = { version = "2", features = ["sync"] }
++# Locale fallback over the blob. Pinned to what icu_capi 2.1.2 requires, and
++# without `compiled_data`, so the fallback data comes from the blob too.
++icu_locale = { version = "~2.1.1", default-features = false, features = ["serde"] }
++icu_provider_adapters = "~2.1.1"
+diff --git a/icu_provider_glue/src/lib.rs b/icu_provider_glue/src/lib.rs
+index ab7dded05..c0cec8773 100644
+--- a/icu_provider_glue/src/lib.rs
++++ b/icu_provider_glue/src/lib.rs
+@@ -1,32 +1,50 @@
+ //! The ICU4X data blob, shared by the glue crates.
+ //!
+-//! Each glue crate builds its ICU4X objects from one process-wide
+-//! [`BlobDataProvider`]. `mozjs_sys::icu` installs the blob before the engine
+-//! starts, so by the time any of them runs the provider is set.
++//! Each glue crate builds its ICU4X objects from one process-wide provider
++//! over a [`BlobDataProvider`]. `mozjs_sys::icu` installs the blob before the
++//! engine starts, so by the time any of them runs the provider is set.
+ 
+ use std::sync::OnceLock;
+ 
++use icu_locale::LocaleFallbacker;
++use icu_provider_adapters::fallback::LocaleFallbackProvider;
+ use icu_provider_blob::BlobDataProvider;
+ 
+-static PROVIDER: OnceLock<BlobDataProvider> = OnceLock::new();
++static PROVIDER: OnceLock<LocaleFallbackProvider<BlobDataProvider>> = OnceLock::new();
+ 
+ /// Installs the ICU4X data blob.
+ ///
+ /// The bytes are borrowed rather than copied, which is why the lifetime is
+-/// `'static`. Returns `Err` if the blob is not a postcard data blob, and
+-/// `Ok(false)` if one was already installed, in which case this one is
+-/// ignored.
++/// `'static`. Returns `Err` if the blob is not a postcard data blob or lacks
++/// the locale fallback data, and `Ok(false)` if one was already installed, in
++/// which case this one is ignored.
+ pub fn set_blob(blob: &'static [u8]) -> Result<bool, icu_provider::DataError> {
+-    let provider = BlobDataProvider::try_new_from_static_blob(blob)?;
+-    Ok(PROVIDER.set(provider).is_ok())
++    let blob = BlobDataProvider::try_new_from_static_blob(blob)?;
++    let fallbacker = LocaleFallbacker::try_new_with_buffer_provider(&blob)?;
++    Ok(PROVIDER
++        .set(LocaleFallbackProvider::new(blob, fallbacker))
++        .is_ok())
+ }
+ 
+ /// The installed ICU4X data provider.
+ ///
++/// A request for a locale the blob does not hold returns the data of the
++/// nearest ancestor it does hold, down to the root locale. The blob is
++/// generated with its locales deduplicated against their parents, so `en-US`,
++/// for example, is only found this way.
++///
+ /// Panics if no blob was installed. That cannot happen through
+ /// `JSEngine::init`, which installs the data or fails before the engine runs.
+-pub fn provider() -> &'static BlobDataProvider {
++pub fn provider() -> &'static LocaleFallbackProvider<BlobDataProvider> {
+     PROVIDER
+         .get()
+         .expect("no ICU4X data: mozjs_sys::icu::install must run before the engine is used")
+ }
++
++/// The installed ICU4X data blob, without locale fallback, for enumerating the
++/// data identifiers it holds.
++///
++/// Panics under the same condition as [`provider`].
++pub fn blob() -> &'static BlobDataProvider {
++    provider().inner()
++}

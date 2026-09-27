@@ -19,6 +19,9 @@
 # in the separate overlay blob that the `segmenter-cjk` feature adds, never in
 # the main one.
 #
+# LocaleParentsV1 and the LocaleLikelySubtags markers are required even if no
+# lookup names them: the runtime builds its locale fallbacker from this blob.
+#
 # Not included: CalendarJapaneseExtendedV1, which icu_calendar declares but no
 # datagen emits. It backs the `japanext` calendar, which Temporal does not
 # expose.

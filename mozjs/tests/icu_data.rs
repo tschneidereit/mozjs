@@ -86,6 +86,16 @@ fn minimized_icu_data_serves_intl_temporal_and_regexp() {
         "/^\\p{Script=Han}$/u.test('\\u4E2D')",
         // ICU4X collator tailorings.
         "new Intl.Collator('de').compare('a', 'b')",
+        // Locales the ICU4X blob does not hold verbatim reach the collator
+        // through locale fallback: en-US is deduplicated into en, and the
+        // default locale depends on the host.
+        "new Intl.Collator('en-US').compare('a', 'b')",
+        "new Intl.Collator().compare('a', 'b')",
+        "'a'.localeCompare('b')",
+        // zh-TW falls back to the zh-Hant tailoring, which orders by stroke
+        // count, and zh orders by pinyin, so the two disagree on these.
+        "'\\u4E00'.localeCompare('\\u4E8C', 'zh-TW')",
+        "'\\u4E00'.localeCompare('\\u4E8C', 'zh')",
         // ICU4X segmenter, grapheme granularity.
         "[...new Intl.Segmenter('en', {granularity: 'grapheme'})\
          .segment('a\\u{1F600}b')].length",
@@ -121,18 +131,23 @@ fn minimized_icu_data_serves_intl_temporal_and_regexp() {
     assert_eq!(results[7], "true", "emoji presentation property escape");
     assert_eq!(results[8], "true", "Han script property escape");
     assert_eq!(results[9], "-1", "de collation");
-    assert_eq!(results[10], "3", "grapheme segmentation");
-    assert_eq!(results[11], "true", "NFC composition");
-    assert_eq!(results[12], "true", "NFD decomposition");
-    assert_eq!(results[13], "true", "NFKC compatibility folding");
+    assert_eq!(results[10], "-1", "en-US collation");
+    assert_eq!(results[11], "-1", "default locale collation");
+    assert_eq!(results[12], "-1", "default locale localeCompare");
+    assert_eq!(results[13], "-1", "zh-TW collation by stroke count");
+    assert_eq!(results[14], "1", "zh collation by pinyin");
+    assert_eq!(results[15], "3", "grapheme segmentation");
+    assert_eq!(results[16], "true", "NFC composition");
+    assert_eq!(results[17], "true", "NFD decomposition");
+    assert_eq!(results[18], "true", "NFKC compatibility folding");
     assert_eq!(
-        results[14], "true",
+        results[19], "true",
         "Thai word segmentation via the LSTM model"
     );
     assert_eq!(
-        results[15], "M01",
+        results[20], "M01",
         "the Chinese calendar resolves a month code"
     );
-    assert_eq!(results[16], "1,00\u{a0}€", "de currency formatting");
-    assert_eq!(results[17], "Frankreich", "de region display name");
+    assert_eq!(results[21], "1,00\u{a0}€", "de currency formatting");
+    assert_eq!(results[22], "Frankreich", "de region display name");
 }

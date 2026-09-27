@@ -16,3 +16,7 @@ icu_provider_blob = { version = "~2.1.1", features = ["alloc"] }
 # what lets the provider live in a `static`. SpiderMonkey creates runtimes on
 # more than one thread.
 icu_provider = { version = "2", features = ["sync"] }
+# Locale fallback over the blob. Pinned to what icu_capi 2.1.2 requires, and
+# without `compiled_data`, so the fallback data comes from the blob too.
+icu_locale = { version = "~2.1.1", default-features = false, features = ["serde"] }
+icu_provider_adapters = "~2.1.1"
