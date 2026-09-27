@@ -65,7 +65,9 @@ fn minimized_icu_data_serves_intl_temporal_and_regexp() {
         // uses ',' as the decimal separator.
         "new Intl.NumberFormat('de').format(1234.5)",
         // en_GB is one of the regional variants, and orders dates day-first.
-        "new Intl.DateTimeFormat('en-GB').format(new Date(Date.UTC(2026, 0, 31)))",
+        // The time zone is fixed so the date does not depend on the host's.
+        "new Intl.DateTimeFormat('en-GB', {timeZone: 'UTC'})\
+         .format(new Date(Date.UTC(2026, 0, 31)))",
         // A locale outside locales.txt falls back to root rather than failing.
         // Danish groups with '.' and uses ',' as the decimal separator, so a
         // root result proves no Danish data was applied. A locale whose own
