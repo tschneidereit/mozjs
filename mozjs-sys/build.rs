@@ -777,18 +777,18 @@ fn get_common_cc(build_dir: &Path, target: BuildTarget) -> cc::Build {
             .define("DEBUG", None)
             .define("JS_DEBUG", None);
 
-        if !target_triple.contains("windows") {
-            // Consumers of prebuilt debug archives need the debug assertions,
-            // not the ability to debug SpiderMonkey itself, so those archives
-            // are compiled optimized and without debug info. The post-build
-            // strip step retains the symbol table, so stack traces stay
-            // readable.
-            if env::var_os("MOZJS_CREATE_ARCHIVE").is_some() {
-                builder.opt_level(3).debug(false);
-            } else {
-                builder.debug(true);
-            }
+        if !target_triple.contains("windows") && env::var_os("MOZJS_CREATE_ARCHIVE").is_none() {
+            builder.debug(true);
         }
+    }
+
+    // Prebuilt archives are built in the `dev` profile, and their consumers
+    // link the glue compiled here, so archives compile it optimized and
+    // without debug info. Consumers of prebuilt debug archives need the debug
+    // assertions, not the ability to debug SpiderMonkey itself. The post-build
+    // strip step retains the symbol table, so stack traces stay readable.
+    if env::var_os("MOZJS_CREATE_ARCHIVE").is_some() {
+        builder.opt_level(3).debug(false);
     }
 
     if get_cc_rs_env_os("CXXSTDLIB").is_none() {
@@ -1318,18 +1318,12 @@ mod archive {
                 &mut File::open(join_path(build_dir, "gluebindings.rs"))?,
             )?;
         } else {
-            // Strip debug info from all static libraries before archiving
-            // for debug builds. Release builds for WASI are built with
-            // `--lto=thin` and contain LLVM bitcode, for which debug symbols
-            // can't be stripped.
+            // Strip debug info from the static libraries before archiving.
             let strip_libs: Vec<PathBuf> = if target.contains("wasi") {
-                if env::var_os("CARGO_FEATURE_DEBUGMOZJS").is_some() {
-                    // jsapi/jsglue are compiled with -g0 (cc_flags), so only
-                    // libjs_static.a contains debug info that needs stripping.
-                    vec![join_path(build_dir, "js/src/build/libjs_static.a")]
-                } else {
-                    vec![]
-                }
+                // jsapi/jsglue are compiled without debug info for archives
+                // (`get_common_cc`), and may be LLVM bitcode under
+                // `MOZJS_CROSS_LTO`, so only libjs_static.a needs stripping.
+                vec![join_path(build_dir, "js/src/build/libjs_static.a")]
             } else {
                 vec![
                     join_path(build_dir, "js/src/build/libjs_static.a"),
