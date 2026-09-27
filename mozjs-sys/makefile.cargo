@@ -116,6 +116,11 @@ ifneq ($(HOST),$(TARGET))
         # Note: libc++ is linked statically and the FFI surface is `extern "C"`,
         # so no libc++ symbol has to resolve across a module boundary.
         CXXFLAGS += -D_LIBCPP_DISABLE_VISIBILITY_ANNOTATIONS
+
+        # Enable SIMD for WASI builds.
+        CFLAGS += -msimd128
+        CXXFLAGS += -msimd128
+
         CONFIGURE_FLAGS += \
             --enable-portable-baseline-interp \
             --disable-clang-plugin \
@@ -131,7 +136,9 @@ ifneq ($(HOST),$(TARGET))
         # don't have a way to detect if the build is for `cargo test`, enable LTO for release
         # builds only.
         ifneq (debug,$(PROFILE))
-            CONFIGURE_FLAGS += --lto=thin
+            CONFIGURE_FLAGS += \
+                --lto=thin \
+                --enable-optimize=-O3
         endif
     endif
 

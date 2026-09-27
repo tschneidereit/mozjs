@@ -803,6 +803,9 @@ fn get_common_cc(build_dir: &Path, target: BuildTarget) -> cc::Build {
     if target_triple.contains("wasi") {
         builder.define("_WASI_EMULATED_GETPID", None);
 
+        // Enable SIMD.
+        builder.flag("-msimd128");
+
         // LTO is off by default here, but can be enabled by defining
         // `MOZJS_CROSS_LTO=1`. Requires a wasi-sdk on the same LLVM major as
         // rust-lld.
